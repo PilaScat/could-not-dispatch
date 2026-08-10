@@ -1,0 +1,121 @@
+{
+  "name": "Could Not Dispatch",
+  "version": "0.1.0",
+  "description": "Plays a looping image or video when every real stream on a channel has failed, so viewers see a message instead of a black screen.",
+  "author": "PilaScat",
+  "license": "MIT",
+  "source_type": "external",
+  "repo_url": "https://github.com/PilaScat/could-not-dispatch",
+  "help_url": "https://github.com/PilaScat/could-not-dispatch#readme",
+  "source_url": "https://github.com/PilaScat/could-not-dispatch/releases/download/v{version}/could-not-dispatch-{version}.zip",
+  "fields": [
+    {
+      "id": "media_source",
+      "label": "Image or video",
+      "type": "string",
+      "default": "",
+      "placeholder": "/data/could-not-dispatch.png",
+      "help_text": "A path inside the Dispatcharr data volume, or an http(s) link that is downloaded and cached. The message must already be part of the file."
+    },
+    {
+      "id": "port",
+      "label": "Local port",
+      "type": "number",
+      "default": 9721,
+      "help_text": "Port the fallback stream listens on, inside the Dispatcharr container. Change it only on a conflict."
+    },
+    {
+      "id": "width",
+      "label": "Width (px)",
+      "type": "number",
+      "default": 0,
+      "help_text": "0 matches the picture, up to 1920x1080. Width and height are a pair: set both, or leave both at 0."
+    },
+    {
+      "id": "height",
+      "label": "Height (px)",
+      "type": "number",
+      "default": 0
+    },
+    {
+      "id": "fps",
+      "label": "Frames per second",
+      "type": "number",
+      "default": 5,
+      "help_text": "A still card needs very few. Raise it only for a video with motion."
+    },
+    {
+      "id": "video_kbps",
+      "label": "Stream bitrate (kbit/s)",
+      "type": "number",
+      "default": 2000,
+      "help_text": "The fallback is padded to this constant rate. Lowering it costs picture quality on dark gradients and makes the card appear later, since Dispatcharr buffers 1 MB before showing anything."
+    },
+    {
+      "id": "exclude_groups",
+      "label": "Excluded groups",
+      "type": "text",
+      "default": "",
+      "help_text": "One channel group name per line. Those channels keep failing as before."
+    },
+    {
+      "id": "exclude_channels",
+      "label": "Excluded channels",
+      "type": "text",
+      "default": "",
+      "help_text": "One channel number or channel name per line."
+    },
+    {
+      "id": "auto_reapply",
+      "label": "Cover new channels automatically",
+      "type": "boolean",
+      "default": true,
+      "help_text": "Attaches the fallback to channels added by an M3U refresh."
+    }
+  ],
+  "actions": [
+    {
+      "id": "apply",
+      "label": "Apply settings",
+      "description": "Applies the settings above and covers every channel that is not excluded.",
+      "button_label": "Apply",
+      "button_variant": "filled"
+    },
+    {
+      "id": "status",
+      "label": "Check status",
+      "description": "Reports whether the fallback is running and how many channels carry it.",
+      "button_label": "Check",
+      "button_variant": "default"
+    },
+    {
+      "id": "reapply",
+      "label": "Cover new channels",
+      "description": "Covers channels that do not carry the fallback yet.",
+      "button_label": "Cover",
+      "button_variant": "default",
+      "events": ["m3u_refresh"]
+    },
+    {
+      "id": "restart",
+      "label": "Restart fallback",
+      "description": "Starts the fallback again if it is down.",
+      "button_label": "Restart",
+      "button_variant": "default",
+      "events": ["channel_start"]
+    },
+    {
+      "id": "remove",
+      "label": "Remove fallback",
+      "description": "Detaches it everywhere, stops it and deletes its stream.",
+      "button_label": "Remove",
+      "button_variant": "default",
+      "button_color": "red",
+      "confirm": {
+        "required": true,
+        "title": "Remove the fallback?",
+        "message": "Channels go back to failing with an error when every stream is down."
+      }
+    }
+  ]
+}
