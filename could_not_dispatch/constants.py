@@ -6,7 +6,8 @@ PLUGIN_NAME = "Could Not Dispatch"
 PLUGIN_VERSION = "0.2.0"
 PLUGIN_DESCRIPTION = (
     "Plays a looping image or video when every real stream on a channel has failed, "
-    "so viewers see a message instead of a black screen."
+    "so viewers see a message instead of a black screen. With an API key, it later sends "
+    "the channel back to its first stream."
 )
 
 STREAM_NAME = "Could Not Dispatch"

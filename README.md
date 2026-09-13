@@ -1,7 +1,8 @@
 # Could Not Dispatch
 
 A Dispatcharr plugin that plays a looping image or video when every real stream on a
-channel has failed, so viewers see a message instead of a black screen.
+channel has failed, so viewers see a message instead of a black screen. With an API key,
+it later sends the channel back to its first stream.
 
 When all of a channel's streams are down, Dispatcharr runs out of alternatives and drops
 the client with a 503. From the sofa that looks the same as a broken router. This plugin
