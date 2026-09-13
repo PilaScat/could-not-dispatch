@@ -167,6 +167,40 @@ def test_the_state_file_lives_beside_the_plugin(loaded_module):
     assert loaded_module.RUNTIME_DIR.parent == ROOT
 
 
+@pytest.fixture
+def covering(loaded_module, monkeypatch):
+    covered: list[list[int]] = []
+
+    def attach(name, url, channel_ids):
+        covered.append(list(channel_ids))
+        return loaded_module.targeting.Attachment(attached=len(channel_ids), separated=0, created=0)
+
+    monkeypatch.setattr(loaded_module.Plugin, "_state", lambda self: {"applied": True})
+    monkeypatch.setattr(loaded_module.targeting, "target_channel_ids", lambda *_: [7, 8])
+    monkeypatch.setattr(loaded_module.targeting, "attach", attach)
+    return covered
+
+
+def test_cover_pressed_by_hand_covers_even_with_automatic_cover_off(loaded_module, covering):
+    settings = {"auto_reapply": False}
+    result = loaded_module.Plugin().run("reapply", {}, {"settings": settings})
+    assert result["status"] == "ok"
+    assert covering == [[7, 8]]
+
+
+def test_an_m3u_refresh_covers_nothing_with_automatic_cover_off(loaded_module, covering):
+    params = {"event": "m3u_refresh", "payload": {}}
+    result = loaded_module.Plugin().run("reapply", params, {"settings": {"auto_reapply": False}})
+    assert result["message"] == "Covering new channels is switched off."
+    assert covering == []
+
+
+def test_an_m3u_refresh_covers_new_channels_by_default(loaded_module, covering):
+    params = {"event": "m3u_refresh", "payload": {}}
+    loaded_module.Plugin().run("reapply", params, {"settings": {}})
+    assert covering == [[7, 8]]
+
+
 def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
     declared = {field["id"] for field in manifest["fields"]}
     used = {

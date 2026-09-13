@@ -120,7 +120,7 @@ class Plugin:
         if handler is None:
             return {"status": "error", "message": f"Unknown action '{action}'."}
         try:
-            return handler(dict(context or {}))
+            return handler({**(context or {}), "params": dict(params or {})})
         except media_module.MediaError as exc:
             return {"status": "error", "message": str(exc)}
         except Exception as exc:
@@ -214,7 +214,8 @@ class Plugin:
         settings = dict(context.get("settings") or {})
         if not self._state().get("applied"):
             return {"status": "ok", "message": "Nothing to do: the fallback is not applied."}
-        if not settings.get("auto_reapply", True) and not context.get("params"):
+        started_by_an_event = bool(dict(context.get("params") or {}).get("event"))
+        if started_by_an_event and not settings.get("auto_reapply", True):
             return {"status": "ok", "message": "Covering new channels is switched off."}
 
         port = _as_int(settings.get("port"), DEFAULT_PORT)
