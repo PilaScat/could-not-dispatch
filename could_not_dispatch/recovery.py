@@ -30,6 +30,7 @@ class SlatedChannel:
     uuid: str
     name: str
     clients: int
+    stream_id: int
 
 
 def _as_int(value: object) -> int:
@@ -48,9 +49,9 @@ def _rows(payload: object) -> list[dict]:
 
 
 class ChannelApi(Protocol):
-    def channels_on(self, stream_id: int) -> list[SlatedChannel]: ...
+    def channels_on(self, url: str) -> list[SlatedChannel]: ...
 
-    def first_sources(self, slate_id: int) -> dict[str, int]: ...
+    def chains(self) -> dict[str, list[int]]: ...
 
     def change_stream(self, uuid: str, stream_id: int) -> None: ...
 
@@ -60,35 +61,32 @@ class Dispatcharr:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
 
-    def channels_on(self, stream_id: int) -> list[SlatedChannel]:
+    def channels_on(self, url: str) -> list[SlatedChannel]:
         payload = self._request("/proxy/ts/status")
         rows = payload.get("channels", []) if isinstance(payload, dict) else []
         found: list[SlatedChannel] = []
         for row in _rows(rows):
             uuid = str(row.get("channel_id") or "")
-            if not uuid or _as_int(row.get("stream_id")) != stream_id:
+            if not uuid or str(row.get("url") or "") != url:
                 continue
             found.append(
                 SlatedChannel(
                     uuid=uuid,
                     name=str(row.get("channel_name") or uuid),
                     clients=_as_int(row.get("client_count")),
+                    stream_id=_as_int(row.get("stream_id")),
                 )
             )
         return found
 
-    def first_sources(self, slate_id: int) -> dict[str, int]:
-        sources: dict[str, int] = {}
+    def chains(self) -> dict[str, list[int]]:
+        chains: dict[str, list[int]] = {}
         for row in _rows(self._request("/api/channels/channels/")):
             uuid = str(row.get("uuid") or "")
-            others = [
-                stream
-                for stream in (_as_int(value) for value in row.get("streams") or [])
-                if stream not in (0, slate_id)
-            ]
-            if uuid and others:
-                sources[uuid] = others[0]
-        return sources
+            if uuid:
+                streams = (_as_int(value) for value in row.get("streams") or [])
+                chains[uuid] = [stream for stream in streams if stream]
+        return chains
 
     def change_stream(self, uuid: str, stream_id: int) -> None:
         self._request(
@@ -138,7 +136,7 @@ class Recovery:
     def __init__(
         self,
         api: ChannelApi,
-        slate_id: int,
+        slate_url: str,
         watching: Callable[[], int],
         log: Callable[[str], None],
         waits: Sequence[float] = RECOVERY_WAIT_SECONDS,
@@ -147,7 +145,7 @@ class Recovery:
         chains_refresh_seconds: float = CHAINS_REFRESH_SECONDS,
     ) -> None:
         self._api = api
-        self._slate_id = slate_id
+        self._slate_url = slate_url
         self._watching = watching
         self._log = log
         self._waits = tuple(waits) or (RECOVERY_WAIT_SECONDS[0],)
@@ -155,8 +153,8 @@ class Recovery:
         self._poll_seconds = poll_seconds
         self._chains_refresh_seconds = chains_refresh_seconds
         self._episodes: dict[str, Episode] = {}
-        self._sources: dict[str, int] = {}
-        self._sources_at: float | None = None
+        self._chains: dict[str, list[int]] = {}
+        self._chains_at: float | None = None
         self._api_down = False
         self._stopping = threading.Event()
 
@@ -183,7 +181,7 @@ class Recovery:
 
     def _check(self, now: float) -> None:
         try:
-            slated = self._api.channels_on(self._slate_id)
+            slated = self._api.channels_on(self._slate_url)
         except ApiError as error:
             self._report_unavailable(error)
             return
@@ -207,7 +205,7 @@ class Recovery:
         episode.due_at = now + self._wait(episode.tries)
         waited = now - episode.since
         try:
-            target = self._first_source(channel.uuid, now)
+            target = self._first_source(channel, now)
             if target is None:
                 self._log(f"{channel.name} has no stream besides the fallback")
                 return
@@ -221,14 +219,13 @@ class Recovery:
             f"sent {channel.name} back to stream {target} after {waited:.0f}s on the fallback"
         )
 
-    def _first_source(self, uuid: str, now: float) -> int | None:
-        stale = (
-            self._sources_at is None or now - self._sources_at >= self._chains_refresh_seconds
-        )
-        if stale or uuid not in self._sources:
-            self._sources = self._api.first_sources(self._slate_id)
-            self._sources_at = now
-        return self._sources.get(uuid)
+    def _first_source(self, channel: SlatedChannel, now: float) -> int | None:
+        stale = self._chains_at is None or now - self._chains_at >= self._chains_refresh_seconds
+        if stale or channel.uuid not in self._chains:
+            self._chains = self._api.chains()
+            self._chains_at = now
+        chain = self._chains.get(channel.uuid, [])
+        return next((stream for stream in chain if stream != channel.stream_id), None)
 
     def _wait(self, tries: int) -> float:
         return self._waits[min(tries, len(self._waits) - 1)]

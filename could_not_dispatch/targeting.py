@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -67,78 +68,123 @@ def target_channel_ids(exclude_groups: object, exclude_channels: object) -> list
     return list(queryset.values_list("id", flat=True))
 
 
-def attach(stream: Any, channel_ids: Sequence[int]) -> int:
-    from apps.channels.models import ChannelStream
+@dataclass(frozen=True)
+class Link:
+    id: int
+    channel_id: int
+    stream_id: int
+
+
+@dataclass(frozen=True)
+class FallbackPlan:
+    shared_links: list[int]
+    uncovered_channels: list[int]
+    spare_streams: list[int]
+
+
+@dataclass(frozen=True)
+class Attachment:
+    attached: int
+    separated: int
+    created: int
+
+
+def plan_fallbacks(
+    links: Sequence[Link], stream_ids: Sequence[int], channel_ids: Sequence[int]
+) -> FallbackPlan:
+    owned: set[int] = set()
+    shared_links: list[int] = []
+    for link in sorted(links, key=lambda item: (item.stream_id, item.channel_id)):
+        if link.stream_id in owned:
+            shared_links.append(link.id)
+        else:
+            owned.add(link.stream_id)
+
+    covered = {link.channel_id for link in links}
+    return FallbackPlan(
+        shared_links=shared_links,
+        uncovered_channels=[channel_id for channel_id in channel_ids if channel_id not in covered],
+        spare_streams=sorted(stream_id for stream_id in stream_ids if stream_id not in owned),
+    )
+
+
+def _fallback_streams(name: str) -> Any:
+    from apps.channels.models import Stream
+
+    return Stream.objects.filter(name=name, is_custom=True)
+
+
+def attach(name: str, url: str, channel_ids: Sequence[int]) -> Attachment:
+    from apps.channels.models import ChannelStream, Stream
     from django.db import transaction
     from django.db.models import Max
 
-    if not channel_ids:
-        return 0
-
     with transaction.atomic():
-        already = set(
-            ChannelStream.objects.filter(
-                stream=stream, channel_id__in=channel_ids
-            ).values_list("channel_id", flat=True)
-        )
-        pending = [channel_id for channel_id in channel_ids if channel_id not in already]
-        if not pending:
-            return 0
+        streams = _fallback_streams(name)
+        streams.exclude(url=url).update(url=url)
+        stream_ids = list(streams.values_list("id", flat=True))
+        links = [
+            Link(*row)
+            for row in ChannelStream.objects.filter(stream_id__in=stream_ids).values_list(
+                "id", "channel_id", "stream_id"
+            )
+        ]
+        plan = plan_fallbacks(links, stream_ids, channel_ids)
+        spare = list(plan.spare_streams)
+        created = 0
 
-        max_orders = {
-            row["channel_id"]: row["highest"]
-            for row in ChannelStream.objects.filter(channel_id__in=pending)
-            .values("channel_id")
-            .annotate(highest=Max("order"))
-        }
-        ChannelStream.objects.bulk_create(
-            [
-                ChannelStream(
-                    channel_id=channel_id,
-                    stream=stream,
-                    order=next_order(max_orders, channel_id),
-                )
-                for channel_id in pending
-            ],
-            ignore_conflicts=True,
-        )
-    return len(pending)
+        def own_stream() -> int:
+            nonlocal created
+            if spare:
+                return spare.pop(0)
+            created += 1
+            return int(Stream.objects.create(name=name, url=url).id)
+
+        for link_id in plan.shared_links:
+            ChannelStream.objects.filter(id=link_id).update(stream_id=own_stream())
+
+        if plan.uncovered_channels:
+            max_orders = {
+                row["channel_id"]: row["highest"]
+                for row in ChannelStream.objects.filter(channel_id__in=plan.uncovered_channels)
+                .values("channel_id")
+                .annotate(highest=Max("order"))
+            }
+            ChannelStream.objects.bulk_create(
+                [
+                    ChannelStream(
+                        channel_id=channel_id,
+                        stream_id=own_stream(),
+                        order=next_order(max_orders, channel_id),
+                    )
+                    for channel_id in plan.uncovered_channels
+                ],
+                ignore_conflicts=True,
+            )
+
+        if spare:
+            Stream.objects.filter(id__in=spare).delete()
+
+    return Attachment(
+        attached=len(plan.uncovered_channels),
+        separated=len(plan.shared_links),
+        created=created,
+    )
 
 
-def detach(stream: Any) -> int:
+def detach(name: str) -> int:
     from apps.channels.models import ChannelStream
 
-    deleted, _ = ChannelStream.objects.filter(stream=stream).delete()
+    deleted, _ = ChannelStream.objects.filter(stream__in=_fallback_streams(name)).delete()
     return int(deleted)
 
 
-def attached_count(stream: Any) -> int:
+def delete_streams(name: str) -> int:
+    deleted, _ = _fallback_streams(name).delete()
+    return int(deleted)
+
+
+def attached_count(name: str) -> int:
     from apps.channels.models import ChannelStream
 
-    return int(ChannelStream.objects.filter(stream=stream).count())
-
-
-def ensure_stream(name: str, url: str, stream_id: object = None) -> tuple[Any, bool]:
-    from apps.channels.models import Stream
-
-    stream = None
-    if stream_id:
-        stream = Stream.objects.filter(id=stream_id).first()
-    if stream is None:
-        stream = Stream.objects.filter(name=name, is_custom=True).first()
-    if stream is None:
-        return Stream.objects.create(name=name, url=url), True
-    if stream.url != url:
-        stream.url = url
-        stream.save(update_fields=["url"])
-    return stream, False
-
-
-def find_stream(name: str, stream_id: object = None) -> Any:
-    from apps.channels.models import Stream
-
-    if stream_id:
-        found = Stream.objects.filter(id=stream_id).first()
-        if found is not None:
-            return found
-    return Stream.objects.filter(name=name, is_custom=True).first()
+    return int(ChannelStream.objects.filter(stream__in=_fallback_streams(name)).count())

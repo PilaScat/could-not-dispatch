@@ -28,6 +28,7 @@ try:
         STREAM_PATH,
     )
     from .could_not_dispatch.encoder import EncodeOptions
+    from .could_not_dispatch.server import slate_url
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from could_not_dispatch import media as media_module
@@ -46,6 +47,7 @@ except ImportError:
         STREAM_PATH,
     )
     from could_not_dispatch.encoder import EncodeOptions
+    from could_not_dispatch.server import slate_url
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +136,8 @@ class Plugin:
 
         detached = 0
         if reason in DETACHING_REASONS:
-            stream = targeting.find_stream(STREAM_NAME, self._state().get("stream_id"))
-            if stream is not None:
-                detached = targeting.detach(stream)
+            detached = targeting.detach(STREAM_NAME)
+            targeting.delete_streams(STREAM_NAME)
             self._remember({}, clear=["pid", "token", "signature", "stream_id", "applied"])
         else:
             self._remember({}, clear=["pid", "token"])
@@ -159,27 +160,22 @@ class Plugin:
         media = media_module.inspect(resolved.path)
         options = self._encode_options(settings, media)
 
-        stream, created = targeting.ensure_stream(
-            STREAM_NAME, self._stream_url(port), self._state().get("stream_id")
-        )
         api_key = _api_key(settings)
-        signature = self._signature(media, options, port, self._recovery_stream(stream.id, api_key))
+        signature = self._signature(media, options, port, bool(api_key))
 
-        started = self._ensure_process(signature, media, options, port, stream.id, api_key)
+        started = self._ensure_process(signature, media, options, port, api_key)
 
         channel_ids = targeting.target_channel_ids(
             settings.get("exclude_groups"), settings.get("exclude_channels")
         )
-        attached = targeting.attach(stream, channel_ids)
+        attachment = targeting.attach(STREAM_NAME, self._stream_url(port), channel_ids)
 
-        self._remember(
-            {"stream_id": stream.id, "signature": signature, "applied": True}
-        )
+        self._remember({"signature": signature, "applied": True}, clear=["stream_id"])
 
         return {
             "status": "ok",
             "message": self._apply_message(
-                resolved, media, options, started, created, attached, len(channel_ids)
+                resolved, media, options, started, attachment, len(channel_ids)
             ),
         }
 
@@ -189,8 +185,7 @@ class Plugin:
         media: media_module.Media,
         options: EncodeOptions,
         started: bool,
-        created: bool,
-        attached: int,
+        attachment: targeting.Attachment,
         covered: int,
     ) -> str:
         parts = [
@@ -199,11 +194,20 @@ class Plugin:
         ]
         if resolved.from_cache:
             parts.append("The download failed, so the cached copy is in use.")
-        parts.append(
-            f"Attached to {attached} new channel(s); {covered} channel(s) covered in total."
-        )
-        if created:
-            parts.append(f"Created the '{STREAM_NAME}' stream.")
+        parts.append(self._coverage_message(attachment, covered))
+        return " ".join(parts)
+
+    def _coverage_message(self, attachment: targeting.Attachment, covered: int) -> str:
+        parts = [
+            f"Attached to {attachment.attached} new channel(s); "
+            f"{covered} channel(s) covered in total."
+        ]
+        if attachment.separated:
+            parts.append(
+                f"Gave {attachment.separated} channel(s) a fallback stream of their own."
+            )
+        if attachment.created:
+            parts.append(f"Created {attachment.created} '{STREAM_NAME}' stream(s).")
         return " ".join(parts)
 
     def _reapply(self, context: dict) -> dict:
@@ -213,21 +217,12 @@ class Plugin:
         if not settings.get("auto_reapply", True) and not context.get("params"):
             return {"status": "ok", "message": "Covering new channels is switched off."}
 
-        stream = targeting.find_stream(STREAM_NAME, self._state().get("stream_id"))
-        if stream is None:
-            return {"status": "error", "message": "The fallback stream no longer exists."}
-
+        port = _as_int(settings.get("port"), DEFAULT_PORT)
         channel_ids = targeting.target_channel_ids(
             settings.get("exclude_groups"), settings.get("exclude_channels")
         )
-        attached = targeting.attach(stream, channel_ids)
-        return {
-            "status": "ok",
-            "message": (
-                f"Attached to {attached} new channel(s); "
-                f"{len(channel_ids)} channel(s) covered in total."
-            ),
-        }
+        attachment = targeting.attach(STREAM_NAME, self._stream_url(port), channel_ids)
+        return {"status": "ok", "message": self._coverage_message(attachment, len(channel_ids))}
 
     def _restart(self, context: dict) -> dict:
         settings = dict(context.get("settings") or {})
@@ -248,13 +243,7 @@ class Plugin:
         port = _as_int(settings.get("port"), DEFAULT_PORT)
         resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
         media = media_module.inspect(resolved.path)
-        self._start_process(
-            media,
-            self._encode_options(settings, media),
-            port,
-            _as_int(state.get("stream_id"), 0),
-            _api_key(settings),
-        )
+        self._start_process(media, self._encode_options(settings, media), port, _api_key(settings))
         return {"status": "ok", "message": "Fallback restarted."}
 
     def _status(self, context: dict) -> dict:
@@ -264,8 +253,7 @@ class Plugin:
         tracked = process.is_running(state.get("pid"), state.get("token"))
         answering = self._probe(port)
         strays = [] if tracked else process.find_servers(port)
-        stream = targeting.find_stream(STREAM_NAME, state.get("stream_id"))
-        covered = targeting.attached_count(stream) if stream is not None else 0
+        covered = targeting.attached_count(STREAM_NAME)
 
         if tracked and answering:
             headline = "Fallback is running."
@@ -291,11 +279,8 @@ class Plugin:
         settings = dict(context.get("settings") or {})
         self._stop_fallback(settings)
 
-        detached = 0
-        stream = targeting.find_stream(STREAM_NAME, self._state().get("stream_id"))
-        if stream is not None:
-            detached = targeting.detach(stream)
-            stream.delete()
+        detached = targeting.detach(STREAM_NAME)
+        targeting.delete_streams(STREAM_NAME)
 
         state_module.save(STATE_PATH, {})
         return {
@@ -309,7 +294,6 @@ class Plugin:
         media: media_module.Media,
         options: EncodeOptions,
         port: int,
-        stream_id: int,
         api_key: str,
     ) -> bool:
         state = self._state()
@@ -319,7 +303,7 @@ class Plugin:
             if state.get("signature") == signature:
                 return False
             process.terminate(pid, token)
-        self._start_process(media, options, port, stream_id, api_key)
+        self._start_process(media, options, port, api_key)
         return True
 
     def _stop_fallback(self, settings: dict) -> bool:
@@ -335,7 +319,6 @@ class Plugin:
         media: media_module.Media,
         options: EncodeOptions,
         port: int,
-        stream_id: int,
         api_key: str,
     ) -> None:
         if not process.port_is_free(LISTEN_HOST, port):
@@ -375,16 +358,13 @@ class Plugin:
         ]
         if media.has_audio:
             arguments.append("--has-audio")
-        recovery_stream = self._recovery_stream(stream_id, api_key)
-        if recovery_stream:
-            arguments += ["--stream-id", str(recovery_stream)]
 
         pid = process.spawn(
             BASE_DIR,
             arguments,
             token,
             LOG_PATH,
-            extra_env={API_KEY_ENV: api_key} if recovery_stream else None,
+            extra_env={API_KEY_ENV: api_key} if api_key else None,
         )
         self._remember({"pid": pid, "token": token, "started_at": time.time()})
 
@@ -438,7 +418,7 @@ class Plugin:
         media: media_module.Media,
         options: EncodeOptions,
         port: int,
-        recovery_stream: int,
+        recovery: bool,
     ) -> str:
         return json.dumps(
             {
@@ -450,16 +430,13 @@ class Plugin:
                 "height": options.height,
                 "fps": options.fps,
                 "video_kbps": options.video_kbps,
-                "recovery_stream": recovery_stream,
+                "recovery": recovery,
             },
             sort_keys=True,
         )
 
-    def _recovery_stream(self, stream_id: int, api_key: str) -> int:
-        return stream_id if stream_id > 0 and api_key else 0
-
     def _stream_url(self, port: int) -> str:
-        return f"http://{LISTEN_HOST}:{port}{STREAM_PATH}"
+        return slate_url(LISTEN_HOST, port, STREAM_PATH)
 
     def _state(self) -> dict:
         return state_module.load(STATE_PATH)

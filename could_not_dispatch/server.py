@@ -361,16 +361,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--video-kbps", type=int, default=DEFAULT_VIDEO_KBPS)
-    parser.add_argument("--stream-id", type=int, default=0)
     return parser.parse_args(argv)
 
 
-def build_recovery(stream_id: int, api_key: str, broadcaster: Broadcaster) -> Recovery | None:
-    if stream_id <= 0 or not api_key:
+def slate_url(host: str, port: int, path: str) -> str:
+    return f"http://{host}:{port}{path}"
+
+
+def build_recovery(url: str, api_key: str, broadcaster: Broadcaster) -> Recovery | None:
+    if not api_key:
         return None
-    return Recovery(
-        Dispatcharr(DISPATCHARR_URL, api_key), stream_id, broadcaster.subscriber_count, _log
-    )
+    return Recovery(Dispatcharr(DISPATCHARR_URL, api_key), url, broadcaster.subscriber_count, _log)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -379,7 +380,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = EncodeOptions.normalized(args.width, args.height, args.fps, args.video_kbps)
     broadcaster = Broadcaster(build_command(media, options))
     server = SlateServer((args.host, args.port), broadcaster, args.path)
-    recovery = build_recovery(args.stream_id, os.environ.get(API_KEY_ENV, ""), broadcaster)
+    recovery = build_recovery(
+        slate_url(args.host, args.port, args.path), os.environ.get(API_KEY_ENV, ""), broadcaster
+    )
 
     def request_shutdown(signum: int, frame: FrameType | None) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()

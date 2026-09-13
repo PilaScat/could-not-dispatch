@@ -44,7 +44,7 @@ and pressing refresh on the Plugins page. Enable the plugin, fill in the setting
 | Check status | Reports whether the fallback is running and how many channels carry it |
 | Cover new channels | Attaches it to channels that do not carry it yet. Also runs by itself after an M3U refresh |
 | Restart fallback | Starts it again if it is down. Also runs by itself when a channel starts, at most once a minute |
-| Remove fallback | Detaches it everywhere, stops it, deletes its stream |
+| Remove fallback | Detaches it everywhere, stops it, deletes its streams |
 
 ## How it works
 
@@ -54,10 +54,15 @@ alive, looping your file into MPEG-TS, and serves it over HTTP at
 The encoder starts when the first viewer arrives and stops fifteen seconds after the last
 one leaves, so an idle server costs nothing.
 
-That URL is registered as a Dispatcharr custom stream and attached to each channel with
-the highest order number, which puts it last in the failover list. Dispatcharr's own
-failover does the rest: it walks the channel's streams in order, and the fallback is the
-only one that cannot fail.
+Each channel gets a Dispatcharr custom stream of its own with that URL, attached with the
+highest order number, which puts it last in the failover list. Dispatcharr's own failover
+does the rest: it walks the channel's streams in order, and the fallback is the only one
+that cannot fail.
+
+The stream is one per channel, not one for all, because Dispatcharr records which M3U
+profile a session holds under the stream. Channels sharing one stream share that record,
+and a channel sent back from the card could then take a provider connection without
+counting it, or free one another channel still held.
 
 A custom stream belongs to the built-in `custom` M3U account, which has no connection
 limit, so the fallback never competes for a slot with your provider.
@@ -131,15 +136,16 @@ when the viewer connected, the rotation can reach the fallback before retrying t
 streams that sit *before* the current one. It only happens when M3U profiles are at
 capacity, and it costs one retry.
 
-**The HDHomeRun tuner count grows by one.** Dispatcharr adds custom streams to the number
-of tuners it advertises.
+**The HDHomeRun tuner count grows by one per covered channel.** Dispatcharr adds custom
+streams to the number of tuners it advertises. The connection limit of your provider is
+unchanged.
 
 **Restarting Dispatcharr leaves the fallback down until it is needed.** The next channel
 start brings it back by itself; **Restart fallback** does it immediately.
 
 **The plugin keeps a small state file** at `.runtime/state.json` inside its own folder,
-holding the process it started and the stream it created. It cannot live in the plugin
-settings: saving those replaces the whole object, which would erase it.
+holding the process it started. It cannot live in the plugin settings: saving those
+replaces the whole object, which would erase it.
 
 ## Development
 
