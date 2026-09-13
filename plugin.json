@@ -1,6 +1,6 @@
 {
   "name": "Could Not Dispatch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Plays a looping image or video when every real stream on a channel has failed, so viewers see a message instead of a black screen.",
   "author": "PilaScat",
   "license": "MIT",

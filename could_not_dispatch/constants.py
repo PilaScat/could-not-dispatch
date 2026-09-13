@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PLUGIN_NAME = "Could Not Dispatch"
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 PLUGIN_DESCRIPTION = (
     "Plays a looping image or video when every real stream on a channel has failed, "
     "so viewers see a message instead of a black screen."

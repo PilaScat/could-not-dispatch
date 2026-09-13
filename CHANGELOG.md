@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — 2026-09-13
+
+- With a Dispatcharr API key, sends a channel left on the fallback back to its first
+  stream. Dispatcharr never leaves the fallback by itself, so a channel whose provider
+  came back within minutes stayed on the card for hours while anyone held it.
+- The first try comes after two minutes on the card, then 4, 8 and 15 minutes apart while
+  the stream keeps failing; the wait starts over once the channel has held a real stream
+  for 15 minutes.
+- Asks Dispatcharr nothing while nobody watches the card. Without a key, nothing changes.
+
 ## 0.1.0 — 2026-08-10
 
 First release.
