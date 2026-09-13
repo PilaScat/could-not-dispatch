@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 — 2026-09-14
+
+- Cover new channels, pressed by hand, covers channels again while Cover new channels
+  automatically is off. Only the run started by an M3U refresh is skipped; before, the
+  button was skipped too, because the check looked for the action's params where
+  Dispatcharr never puts them.
+- Checked against Dispatcharr 0.31.0: nothing the plugin relies on changed.
+
 ## 0.3.0 — 2026-09-13
 
 - Each channel gets a fallback stream of its own instead of sharing one. Dispatcharr
