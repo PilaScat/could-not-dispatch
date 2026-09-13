@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-09-13
+
+- The plugin description now says what 0.2.0 added: with an API key, a channel left on
+  the fallback is sent back to its first stream.
+
 ## 0.2.0 — 2026-09-13
 
 - With a Dispatcharr API key, sends a channel left on the fallback back to its first
