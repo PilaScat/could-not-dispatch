@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 — 2026-09-13
+
+- Each channel gets a fallback stream of its own instead of sharing one. Dispatcharr
+  records which M3U profile a session holds under the stream, so with one shared stream a
+  channel sent back from the card could take a provider connection without counting it,
+  or free one another channel still held: a provider limited to 3 connections served 4
+  streams at once. Apply and Cover new channels move existing channels to their own
+  stream in place, keeping its position in the order.
+- Channels on the card are recognised by the fallback URL, so sending them back no longer
+  needs a stream id.
+- The HDHomeRun tuner count Dispatcharr advertises now grows by one per covered channel,
+  since Dispatcharr counts every custom stream as a tuner.
+- Disabling or deleting the plugin, and Remove fallback, delete the fallback streams as
+  well as detaching them.
+
 ## 0.2.1 — 2026-09-13
 
 - The plugin description now says what 0.2.0 added: with an API key, a channel left on
