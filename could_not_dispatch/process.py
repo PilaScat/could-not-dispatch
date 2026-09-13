@@ -8,7 +8,7 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from .constants import RUN_TOKEN_ENV, SERVER_MODULE, TERMINATE_GRACE_SECONDS
@@ -63,10 +63,17 @@ def _trim_log(log_path: Path) -> None:
         pass
 
 
-def spawn(base_dir: Path, arguments: Sequence[str], run_token: str, log_path: Path) -> int:
+def spawn(
+    base_dir: Path,
+    arguments: Sequence[str],
+    run_token: str,
+    log_path: Path,
+    extra_env: Mapping[str, str] | None = None,
+) -> int:
     command = [resolve_interpreter(), "-m", SERVER_MODULE, *arguments]
 
     environment = os.environ.copy()
+    environment.update(extra_env or {})
     environment["PYTHONPATH"] = prepend_pythonpath(
         environment.get("PYTHONPATH"), str(base_dir)
     )

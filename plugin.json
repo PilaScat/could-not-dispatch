@@ -71,6 +71,13 @@
       "type": "boolean",
       "default": true,
       "help_text": "Attaches the fallback to channels added by an M3U refresh."
+    },
+    {
+      "id": "api_key",
+      "label": "API key",
+      "type": "string",
+      "default": "",
+      "help_text": "A Dispatcharr API key. With it, a channel left on the fallback goes back to its first stream after two minutes, then at longer intervals. Empty keeps channels on the fallback."
     }
   ],
   "actions": [

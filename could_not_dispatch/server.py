@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import queue
 import signal
 import subprocess
@@ -15,12 +16,14 @@ from types import FrameType
 from urllib.parse import urlparse
 
 from .constants import (
+    API_KEY_ENV,
     CHUNK_SIZE,
     DEFAULT_FPS,
     DEFAULT_HEIGHT,
     DEFAULT_PORT,
     DEFAULT_VIDEO_KBPS,
     DEFAULT_WIDTH,
+    DISPATCHARR_URL,
     ENCODER_RESTART_BACKOFF_SECONDS,
     HEALTH_PATH,
     IDLE_SHUTDOWN_SECONDS,
@@ -35,6 +38,7 @@ from .constants import (
 )
 from .encoder import EncodeOptions, build_command
 from .media import Media
+from .recovery import Dispatcharr, Recovery
 from .transport import head_start
 
 CHUNK_TIMEOUT = 20.0
@@ -357,7 +361,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--video-kbps", type=int, default=DEFAULT_VIDEO_KBPS)
+    parser.add_argument("--stream-id", type=int, default=0)
     return parser.parse_args(argv)
+
+
+def build_recovery(stream_id: int, api_key: str, broadcaster: Broadcaster) -> Recovery | None:
+    if stream_id <= 0 or not api_key:
+        return None
+    return Recovery(
+        Dispatcharr(DISPATCHARR_URL, api_key), stream_id, broadcaster.subscriber_count, _log
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -366,6 +379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = EncodeOptions.normalized(args.width, args.height, args.fps, args.video_kbps)
     broadcaster = Broadcaster(build_command(media, options))
     server = SlateServer((args.host, args.port), broadcaster, args.path)
+    recovery = build_recovery(args.stream_id, os.environ.get(API_KEY_ENV, ""), broadcaster)
 
     def request_shutdown(signum: int, frame: FrameType | None) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
@@ -376,9 +390,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             signal.signal(handler, request_shutdown)
 
     _log(f"serving {args.path} on {args.host}:{args.port} from {args.media}")
+    if recovery is not None:
+        recovery.start()
+        _log(
+            f"sending channels back to their first stream after "
+            f"{recovery.first_wait:.0f}s on the fallback"
+        )
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
+        if recovery is not None:
+            recovery.stop()
         broadcaster.close()
         server.server_close()
     return 0

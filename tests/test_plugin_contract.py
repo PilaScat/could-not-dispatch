@@ -182,5 +182,6 @@ def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
         "exclude_groups",
         "exclude_channels",
         "auto_reapply",
+        "api_key",
     }
     assert used <= declared

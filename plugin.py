@@ -16,6 +16,7 @@ try:
     from .could_not_dispatch import process, targeting
     from .could_not_dispatch import state as state_module
     from .could_not_dispatch.constants import (
+        API_KEY_ENV,
         DEFAULT_PORT,
         HEALTH_PATH,
         LISTEN_HOST,
@@ -33,6 +34,7 @@ except ImportError:
     from could_not_dispatch import process, targeting
     from could_not_dispatch import state as state_module
     from could_not_dispatch.constants import (
+        API_KEY_ENV,
         DEFAULT_PORT,
         HEALTH_PATH,
         LISTEN_HOST,
@@ -86,6 +88,10 @@ def _as_int(value: object, fallback: int) -> int:
         return int(float(str(value)))
     except (TypeError, ValueError):
         return fallback
+
+
+def _api_key(settings: dict) -> str:
+    return str(settings.get("api_key") or "").strip()
 
 
 class Plugin:
@@ -152,13 +158,15 @@ class Plugin:
         resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
         media = media_module.inspect(resolved.path)
         options = self._encode_options(settings, media)
-        signature = self._signature(media, options, port)
-
-        started = self._ensure_process(signature, media, options, port)
 
         stream, created = targeting.ensure_stream(
             STREAM_NAME, self._stream_url(port), self._state().get("stream_id")
         )
+        api_key = _api_key(settings)
+        signature = self._signature(media, options, port, self._recovery_stream(stream.id, api_key))
+
+        started = self._ensure_process(signature, media, options, port, stream.id, api_key)
+
         channel_ids = targeting.target_channel_ids(
             settings.get("exclude_groups"), settings.get("exclude_channels")
         )
@@ -240,7 +248,13 @@ class Plugin:
         port = _as_int(settings.get("port"), DEFAULT_PORT)
         resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
         media = media_module.inspect(resolved.path)
-        self._start_process(media, self._encode_options(settings, media), port)
+        self._start_process(
+            media,
+            self._encode_options(settings, media),
+            port,
+            _as_int(state.get("stream_id"), 0),
+            _api_key(settings),
+        )
         return {"status": "ok", "message": "Fallback restarted."}
 
     def _status(self, context: dict) -> dict:
@@ -295,6 +309,8 @@ class Plugin:
         media: media_module.Media,
         options: EncodeOptions,
         port: int,
+        stream_id: int,
+        api_key: str,
     ) -> bool:
         state = self._state()
         pid = state.get("pid")
@@ -303,7 +319,7 @@ class Plugin:
             if state.get("signature") == signature:
                 return False
             process.terminate(pid, token)
-        self._start_process(media, options, port)
+        self._start_process(media, options, port, stream_id, api_key)
         return True
 
     def _stop_fallback(self, settings: dict) -> bool:
@@ -315,7 +331,12 @@ class Plugin:
         return stopped or bool(strays)
 
     def _start_process(
-        self, media: media_module.Media, options: EncodeOptions, port: int
+        self,
+        media: media_module.Media,
+        options: EncodeOptions,
+        port: int,
+        stream_id: int,
+        api_key: str,
     ) -> None:
         if not process.port_is_free(LISTEN_HOST, port):
             reclaimed = process.terminate_strays(port)
@@ -354,8 +375,17 @@ class Plugin:
         ]
         if media.has_audio:
             arguments.append("--has-audio")
+        recovery_stream = self._recovery_stream(stream_id, api_key)
+        if recovery_stream:
+            arguments += ["--stream-id", str(recovery_stream)]
 
-        pid = process.spawn(BASE_DIR, arguments, token, LOG_PATH)
+        pid = process.spawn(
+            BASE_DIR,
+            arguments,
+            token,
+            LOG_PATH,
+            extra_env={API_KEY_ENV: api_key} if recovery_stream else None,
+        )
         self._remember({"pid": pid, "token": token, "started_at": time.time()})
 
         if not self._wait_for_port(port):
@@ -404,7 +434,11 @@ class Plugin:
         )
 
     def _signature(
-        self, media: media_module.Media, options: EncodeOptions, port: int
+        self,
+        media: media_module.Media,
+        options: EncodeOptions,
+        port: int,
+        recovery_stream: int,
     ) -> str:
         return json.dumps(
             {
@@ -416,9 +450,13 @@ class Plugin:
                 "height": options.height,
                 "fps": options.fps,
                 "video_kbps": options.video_kbps,
+                "recovery_stream": recovery_stream,
             },
             sort_keys=True,
         )
+
+    def _recovery_stream(self, stream_id: int, api_key: str) -> int:
+        return stream_id if stream_id > 0 and api_key else 0
 
     def _stream_url(self, port: int) -> str:
         return f"http://{LISTEN_HOST}:{port}{STREAM_PATH}"

@@ -244,3 +244,29 @@ def test_spawn_starts_the_server_module_and_it_can_be_stopped(tmp_path):
     finally:
         process.terminate(pid, "token-123")
     assert process.is_running(pid) is False
+
+
+def test_spawn_hands_the_extra_environment_to_the_server(tmp_path):
+    package = tmp_path / "could_not_dispatch"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "server.py").write_text(
+        "import os, sys\n"
+        "sys.stderr.write('key=' + os.environ.get('COULD_NOT_DISPATCH_API_KEY', '') + '\\n')\n"
+    )
+    log_path = tmp_path / "logs" / "fallback.log"
+
+    process.spawn(
+        tmp_path, [], "token-env", log_path, extra_env={"COULD_NOT_DISPATCH_API_KEY": "s3cret"}
+    )
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and "key=" not in _read(log_path):
+        time.sleep(0.05)
+    assert "key=s3cret" in _read(log_path)
+
+
+def _read(path):
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
