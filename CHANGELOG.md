@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 — 2026-09-14
+
+- Remove fallback says it deletes the fallback streams, plural: every channel has had its
+  own since 0.3.0.
+- The README links to the licence and to `docs/MEMORY.md` by full address, so they also work
+  in the copy the plugin registry keeps.
+
 ## 0.3.2 — 2026-09-14
 
 - Apply and Cover new channels now take the fallback off channels excluded since it was
