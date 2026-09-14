@@ -12,6 +12,7 @@ from typing import Protocol
 
 from .constants import (
     API_TIMEOUT_SECONDS,
+    CATALOGUE_RETRY_SECONDS,
     CHAINS_REFRESH_SECONDS,
     PLUGIN_VERSION,
     RECOVERY_CROWDED_MEMORY_SECONDS,
@@ -250,7 +251,10 @@ class Recovery:
     def tick(self, now: float) -> None:
         try:
             status = self._api.status(self._slate_url)
-            self._refresh(now)
+            unknown = any(
+                self._unknown(channel) for channel in status.slated if channel.clients > 0
+            )
+            self._refresh(now, unknown)
         except ApiError as error:
             self._report_unavailable(error)
             self._forget_settled(now)
@@ -334,14 +338,22 @@ class Recovery:
         )
         return True
 
-    def _refresh(self, now: float) -> None:
+    def _refresh(self, now: float, unknown: bool) -> None:
+        age = None if self._catalogue_at is None else now - self._catalogue_at
         stale = (
-            self._catalogue_at is None
-            or now - self._catalogue_at >= self._chains_refresh_seconds
+            age is None
+            or age >= self._chains_refresh_seconds
+            or (unknown and age >= CATALOGUE_RETRY_SECONDS)
         )
         if stale:
             self._catalogue = self._api.catalogue()
             self._catalogue_at = now
+
+    def _unknown(self, channel: SlatedChannel) -> bool:
+        if channel.uuid not in self._catalogue.chains:
+            return True
+        first = self._first_source(channel)
+        return first is not None and first not in self._catalogue.accounts
 
     def _first_source(self, channel: SlatedChannel) -> int | None:
         chain = self._catalogue.chains.get(channel.uuid, [])

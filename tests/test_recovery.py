@@ -40,6 +40,7 @@ class FakeApi:
         self.status_fails = False
         self.change_fails = False
         self.capacity_refusals = 0
+        self.catalogue_calls = 0
 
     def put_on_slate(self, uuid: str, clients: int = 1) -> None:
         self.slated[uuid] = SlatedChannel(
@@ -57,6 +58,7 @@ class FakeApi:
         return Status(slated=list(self.slated.values()), usage={PROVIDER_PROFILE: self.busy})
 
     def catalogue(self) -> Catalogue:
+        self.catalogue_calls += 1
         return Catalogue(
             chains={uuid: list(streams) for uuid, streams in self.chain.items()},
             accounts=dict(self.accounts),
@@ -192,6 +194,35 @@ def test_an_unreachable_api_is_reported_once_and_the_loop_carries_on():
     api.status_fails = False
     run(recovery, 310, 430)
     assert api.changes == [(WEB3, 2262)]
+
+
+def test_a_channel_created_after_the_catalogue_was_read_is_looked_up_again():
+    recovery, api, _ = build()
+    del api.chain[CALCIO]
+    recovery.tick(0)
+    api.chain[CALCIO] = [1289, OWN_SLATE[CALCIO]]
+    api.put_on_slate(CALCIO)
+    run(recovery, 10, 150)
+    assert api.changes == [(CALCIO, 1289)]
+
+
+def test_a_first_stream_of_unknown_account_is_looked_up_again_every_thirty_seconds_at_most():
+    recovery, api, _ = build()
+    api.chain[WEB3] = [2270, OWN_SLATE[WEB3]]
+    recovery.tick(0)
+    assert api.catalogue_calls == 1
+    api.put_on_slate(WEB3)
+    run(recovery, 10, 20)
+    assert api.catalogue_calls == 1
+    recovery.tick(30)
+    assert api.catalogue_calls == 2
+    api.accounts[2270] = PROVIDER
+    run(recovery, 40, 50)
+    assert api.catalogue_calls == 2
+    recovery.tick(60)
+    assert api.catalogue_calls == 3
+    run(recovery, 70, 300)
+    assert api.catalogue_calls == 3
 
 
 def test_a_channel_that_found_the_provider_full_goes_back_as_soon_as_a_connection_frees_up():
