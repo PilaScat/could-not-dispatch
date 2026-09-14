@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from could_not_dispatch.constants import KIND_IMAGE, KIND_VIDEO
+from could_not_dispatch.constants import DEFAULT_FPS, KIND_IMAGE, KIND_VIDEO
 from could_not_dispatch.encoder import EncodeOptions, build_command, scale_filter
 from could_not_dispatch.media import Media
 
@@ -153,7 +153,7 @@ def test_normalized_options_clamp_out_of_range_values():
 def test_normalized_options_survive_strings_and_junk():
     options = EncodeOptions.normalized(width="1920", height="1080.0", fps="ten")
     assert (options.width, options.height) == (1920, 1080)
-    assert options.fps == 5
+    assert options.fps == DEFAULT_FPS
 
 
 def test_the_frame_matches_the_picture_when_no_size_is_given():

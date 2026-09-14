@@ -12,6 +12,14 @@
   full provider for 20 seconds, and while such a channel waits it checks every two seconds. A
   refusal for capacity does not count as a try; a channel that lands on the card again within
   two minutes of such a return waits like any other.
+- The fallback runs at 25 frames per second by default, up from 5. Jellyfin sets the frame
+  rate of a transcode from the start of the stream, so a viewer who started a channel on the
+  card went on at 5 frames per second after the channel was back on its stream: 938 frames
+  in three minutes, measured. The bitrate is unchanged, so the file size and the average
+  picture quality stay the same (60.3 dB on the dark card at 2000 kbit/s); the one encode
+  shared by every viewer on the card costs about a third of a core more. The default only
+  reaches installations that never saved their settings: saved settings keep the 5 they
+  stored, so set Frames per second to 25 and press Apply.
 - A registry workflow opens the version bump PR on `Dispatcharr/Plugins` when a release is
   published.
 

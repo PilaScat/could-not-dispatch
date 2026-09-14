@@ -41,8 +41,8 @@
       "id": "fps",
       "label": "Frames per second",
       "type": "number",
-      "default": 5,
-      "help_text": "A still card needs very few. Raise it only for a video with motion."
+      "default": 25,
+      "help_text": "Keep it at the rate of your channels: Jellyfin keeps the frame rate a session starts with, so a viewer who starts on the card at 5 stays at 5 after the channel is back."
     },
     {
       "id": "video_kbps",
