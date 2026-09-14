@@ -161,11 +161,11 @@ python3 -m venv .venv
 ```
 
 The same four checks run in CI on every push. Decisions, traps and the release routine are in
-[docs/MEMORY.md](docs/MEMORY.md).
+[docs/MEMORY.md](https://github.com/PilaScat/could-not-dispatch/blob/master/docs/MEMORY.md).
 
 `build_zip.py` writes `dist/could-not-dispatch-<version>.zip`, laid out the way
 Dispatcharr expects an imported plugin.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/PilaScat/could-not-dispatch/blob/master/LICENSE).

@@ -114,7 +114,7 @@
     {
       "id": "remove",
       "label": "Remove fallback",
-      "description": "Detaches it everywhere, stops it and deletes its stream.",
+      "description": "Detaches it everywhere, stops it and deletes its streams.",
       "button_label": "Remove",
       "button_variant": "default",
       "button_color": "red",
