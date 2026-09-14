@@ -397,7 +397,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         recovery.start()
         _log(
             f"sending channels back to their first stream after "
-            f"{recovery.first_wait:.0f}s on the fallback"
+            f"{recovery.first_wait:.0f}s on the fallback, or as soon as a connection frees up "
+            f"when the provider was full"
         )
     try:
         server.serve_forever(poll_interval=0.5)

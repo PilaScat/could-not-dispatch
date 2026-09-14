@@ -17,6 +17,13 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   from channels excluded since, and move it back to the end where a stream was added after it.
 - **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 120 s on the card,
   then after 4, 8 and 15 minutes. A channel on the card is recognised by its URL.
+- **A full provider is remembered, not observed at the moment of the fallback** (0.4.0). With
+  `channel_shutdown_delay` at 0 the channel a viewer left frees its connection within a couple
+  of seconds, so by the next poll the provider may have room again. The status is therefore
+  read every 10 s even with nobody on the card, and a channel whose first stream's account was
+  full in the last 20 s goes back as soon as there is room. The usage per profile comes from
+  `/proxy/ts/status` (channels not on the card), the limits from `/api/m3u/accounts/`; a profile
+  with `max_streams` 0 has no limit.
 - **State lives in `.runtime/state.json`**, never in the plugin settings: saving the settings
   replaces the whole object.
 
@@ -41,6 +48,9 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 2. A `CHANGELOG.md` section, written before the tag.
 3. `python scripts/build_zip.py`, then an annotated tag `vX.Y.Z` named `Could Not Dispatch X.Y.Z`.
 4. A GitHub Release with the CHANGELOG text, the list of commits it contains, and the zip.
-5. For the registry, a PR to `Dispatcharr/Plugins` from the fork: bump
-   `plugins/could-not-dispatch/plugin.json` and copy the README next to it. The registry
+5. Publishing the Release starts `.github/workflows/registry-pr.yml`, which opens the PR to
+   `Dispatcharr/Plugins` from the `PilaScat/Plugins` fork: the version in
+   `plugins/could-not-dispatch/plugin.json`, the README next to it when it changed, and the
+   CHANGELOG section as the description. It needs the `REGISTRY_PR_TOKEN` secret, a classic PAT
+   of PilaScat with `public_repo` only; it can be rerun by hand with the tag. The registry
    installs the zip at `source_url`, so a README change reaches users only with a new version.

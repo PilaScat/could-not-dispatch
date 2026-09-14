@@ -1,6 +1,6 @@
 {
   "name": "Could Not Dispatch",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Plays a looping image or video when every real stream on a channel has failed, so viewers see a message instead of a black screen. With an API key, it later sends the channel back to its first stream.",
   "author": "PilaScat",
   "license": "MIT",
@@ -77,7 +77,7 @@
       "label": "API key",
       "type": "string",
       "default": "",
-      "help_text": "A Dispatcharr API key. With it, a channel left on the fallback goes back to its first stream after two minutes, then at longer intervals. Empty keeps channels on the fallback."
+      "help_text": "A Dispatcharr API key. With it, a channel left on the fallback goes back to its first stream after two minutes, then at longer intervals, or as soon as a connection frees up when it fell back for lack of one. Empty keeps channels on the fallback."
     }
   ],
   "actions": [

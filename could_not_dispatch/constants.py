@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PLUGIN_NAME = "Could Not Dispatch"
-PLUGIN_VERSION = "0.3.3"
+PLUGIN_VERSION = "0.4.0"
 PLUGIN_DESCRIPTION = (
     "Plays a looping image or video when every real stream on a channel has failed, "
     "so viewers see a message instead of a black screen. With an API key, it later sends "
@@ -22,6 +22,8 @@ API_KEY_ENV = "COULD_NOT_DISPATCH_API_KEY"
 DISPATCHARR_URL = "http://127.0.0.1:9191"
 API_TIMEOUT_SECONDS = 10.0
 RECOVERY_POLL_SECONDS = 10.0
+RECOVERY_FAST_POLL_SECONDS = 2.0
+RECOVERY_CROWDED_MEMORY_SECONDS = 20.0
 RECOVERY_WAIT_SECONDS = (120.0, 240.0, 480.0, 900.0)
 RECOVERY_SETTLED_SECONDS = 900.0
 CHAINS_REFRESH_SECONDS = 900.0

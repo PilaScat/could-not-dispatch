@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-09-14
+
+- A channel that lands on the fallback because the provider has no free connection goes back
+  to its first stream as soon as a connection frees up, instead of after two minutes. That is
+  what a viewer gets when switching channels with every connection in use: the new channel
+  finds no room, falls to the card, and used to stay there for two minutes after the old one
+  had closed. Measured with 30 simulated viewers on a provider limited to 3 connections, every
+  collective channel change left the three new channels on the card for 120 to 130 s. The
+  fallback now reads the connections in use per M3U profile every ten seconds, remembers a
+  full provider for 20 seconds, and while such a channel waits it checks every two seconds. A
+  refusal for capacity does not count as a try; a channel that lands on the card again within
+  two minutes of such a return waits like any other.
+- A registry workflow opens the version bump PR on `Dispatcharr/Plugins` when a release is
+  published.
+
 ## 0.3.3 — 2026-09-14
 
 - Remove fallback says it deletes the fallback streams, plural: every channel has had its

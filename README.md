@@ -126,11 +126,18 @@ stream, so Dispatcharr considers the channel up. To spot real outages, watch the
 **Playback returns to the provider only with an API key.** Dispatcharr never leaves the
 fallback by itself: a channel stays on the card for as long as a client holds it, even
 after the provider is back. Without a key that stays true. With one, the fallback asks
-Dispatcharr every ten seconds, while it has viewers, which channels are playing it, and
-switches a channel still on it after two minutes to its first stream. If that stream is
-still down, the failover walks the chain and lands on the card again, and the next try
-waits longer: 4, 8, then 15 minutes. The wait starts over once the channel has stayed off
-the card for 15 minutes.
+Dispatcharr every ten seconds which channels are playing it and how many connections each
+M3U profile is using, and switches a channel still on it after two minutes to its first
+stream. If that stream is still down, the failover walks the chain and lands on the card
+again, and the next try waits longer: 4, 8, then 15 minutes. The wait starts over once the
+channel has stayed off the card for 15 minutes.
+
+A channel that reaches the card while the provider of its first stream is full, or was full
+in the 20 seconds before, is there for lack of a connection, not because its streams failed:
+a viewer switching channels with every connection in use lands on it. That channel goes back
+as soon as a connection frees up, checked every two seconds, and a refusal for capacity is
+not counted as a try. If it lands on the card again within two minutes of that return, its
+streams are failing after all, and it waits like any other.
 
 **One edge case in failover order.** Dispatcharr rotates the alternate list starting from
 the current stream and wraps around. If the first stream of a channel was unavailable
