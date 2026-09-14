@@ -160,6 +160,9 @@ python3 -m venv .venv
 .venv/bin/python scripts/build_zip.py
 ```
 
+The same four checks run in CI on every push. Decisions, traps and the release routine are in
+[docs/MEMORY.md](docs/MEMORY.md).
+
 `build_zip.py` writes `dist/could-not-dispatch-<version>.zip`, laid out the way
 Dispatcharr expects an imported plugin.
 
