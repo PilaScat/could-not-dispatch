@@ -24,6 +24,12 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   full in the last 20 s goes back as soon as there is room. The usage per profile comes from
   `/proxy/ts/status` (channels not on the card), the limits from `/api/m3u/accounts/`; a profile
   with `max_streams` 0 has no limit.
+- **The catalog is read every 15 minutes** (chains, accounts), and at once, at most every 30 s,
+  when a channel on the card is not in it: a channel created after the last read still gets its
+  return (0.4.0).
+- **The card runs at 25 fps by default** (0.4.0): Jellyfin takes a transcode's frame rate from
+  its first input, so a session that began on a 5 fps card stayed at 5 fps after going back to
+  the provider. Saved settings keep their stored value.
 - **State lives in `.runtime/state.json`**, never in the plugin settings: saving the settings
   replaces the whole object.
 
@@ -39,8 +45,23 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   (or whatever `media_source` points to) and `.runtime/` out first and back after. The new code
   only runs after `POST /api/plugins/plugins/reload/`, and the reload stops every plugin's
   processes, so press Apply afterwards.
+- Dispatcharr fetches the card through the channel's stream profile, like any source: a profile
+  that cannot start (a wrapper script saved with CRLF endings, or one that never exits on a
+  refused source) keeps the channel off the card too.
 - On Windows the `posix_only` and `proc_fs_only` tests are skipped and `mypy .` reports
   `os.WNOHANG`; `mypy --platform linux .` is clean. The CI on Linux is the reference.
+
+## Checking the connection count
+
+Redo this after any change to the way a channel goes back to the provider. It uses no provider
+connection: an `STD` M3U account uploaded from a file (`POST /api/m3u/accounts/` with the file,
+`max_streams` 1, then enable its group and refresh), whose streams point at the card with a
+different query (`http://127.0.0.1:9721/slate.ts?bench=a`; the server looks only at the path).
+Three channels `[test stream, card]`: A takes the slot, B and C fall on the card, A leaves.
+After 120 s `/proxy/ts/status` must show one channel on that profile, and the second return is
+refused with `No profiles available with connection capacity`; with the shared card of 0.2.1
+there were two. Afterwards delete the channels, the account, its group, and the uploaded file in
+`/data/uploads/m3us/`, which deleting the account leaves behind.
 
 ## Release
 
