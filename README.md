@@ -18,8 +18,8 @@ The message lives in the picture you supply. The plugin does not draw text.
 
 ## Install
 
-From the Plugin Hub, or by unzipping the release into `/data/plugins/could-not-dispatch`
-and pressing refresh on the Plugins page. Enable the plugin, fill in the settings, press
+From the Plugin Hub, or by unzipping the release into `/data/plugins`, which creates the
+`could-not-dispatch` folder, and pressing refresh on the Plugins page. Enable the plugin, fill in the settings, press
 **Apply**.
 
 ## Settings
