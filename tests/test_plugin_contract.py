@@ -61,6 +61,19 @@ def loaded_module():
             del sys.modules[name]
 
 
+@pytest.fixture
+def isolated_runtime(loaded_module, tmp_path, monkeypatch):
+    runtime = tmp_path / ".runtime"
+    for name in ("STATE_PATH", "JOURNAL_PATH", "LOG_PATH", "MEDIA_CACHE_DIR"):
+        if hasattr(loaded_module, name):
+            monkeypatch.setattr(loaded_module, name, runtime / getattr(loaded_module, name).name)
+    monkeypatch.setattr(loaded_module, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(loaded_module.process, "terminate_strays", lambda *_a, **_k: [])
+    if hasattr(loaded_module.process, "find_servers"):
+        monkeypatch.setattr(loaded_module.process, "find_servers", lambda *_a, **_k: [])
+    return runtime
+
+
 def test_the_loader_import_path_finds_a_plugin_class(loaded_module):
     assert hasattr(loaded_module, "Plugin")
 
@@ -80,14 +93,16 @@ def test_the_instance_reports_the_manifest_metadata(loaded_module, manifest):
     assert plugin.actions == manifest["actions"]
 
 
-def test_every_manifest_action_has_a_handler(loaded_module, manifest):
+def test_every_manifest_action_has_a_handler(loaded_module, manifest, isolated_runtime):
     plugin = loaded_module.Plugin()
     for action in manifest["actions"]:
         result = plugin.run(action["id"], {}, {"settings": {}})
         assert not str(result.get("message", "")).startswith("Unknown action")
 
 
-def test_an_unknown_action_is_refused_without_touching_the_database(loaded_module):
+def test_an_unknown_action_is_refused_without_touching_the_database(
+    loaded_module, isolated_runtime
+):
     result = loaded_module.Plugin().run("nope", {}, {"settings": {}})
     assert result["status"] == "error"
     assert "Unknown action" in result["message"]
@@ -168,7 +183,7 @@ def test_the_state_file_lives_beside_the_plugin(loaded_module):
 
 
 @pytest.fixture
-def covering(loaded_module, monkeypatch):
+def covering(loaded_module, isolated_runtime, monkeypatch):
     covered: list[list[int]] = []
 
     def attach(name, url, channel_ids):
