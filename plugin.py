@@ -208,6 +208,13 @@ class Plugin:
             )
         if attachment.created:
             parts.append(f"Created {attachment.created} '{STREAM_NAME}' stream(s).")
+        if attachment.detached:
+            parts.append(f"Removed it from {attachment.detached} excluded channel(s).")
+        if attachment.moved:
+            parts.append(
+                f"Moved it back to the end of {attachment.moved} channel(s) "
+                "with streams added after it."
+            )
         return " ".join(parts)
 
     def _reapply(self, context: dict) -> dict:

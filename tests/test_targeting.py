@@ -73,8 +73,35 @@ def test_a_fallback_no_channel_carries_is_spare():
     assert plan.spare_streams == [101, 102]
 
 
-def test_an_excluded_channel_still_stops_sharing_but_is_not_covered_anew():
+def test_a_channel_excluded_after_apply_loses_its_fallback():
     links = [Link(10, 1, SHARED), Link(11, 9, SHARED)]
     plan = plan_fallbacks(links, [SHARED], [1, 2])
-    assert plan.shared_links == [11]
+    assert plan.excluded_links == [11]
+    assert plan.shared_links == []
     assert plan.uncovered_channels == [2]
+
+
+def test_the_stream_of_an_excluded_channel_becomes_spare():
+    links = [Link(10, 1, 100), Link(11, 9, 101)]
+    plan = plan_fallbacks(links, [100, 101], [1])
+    assert plan.excluded_links == [11]
+    assert plan.spare_streams == [101]
+
+
+def test_a_fallback_with_streams_added_after_it_goes_back_to_the_end():
+    links = [Link(10, 1, 100, order=4), Link(11, 2, 101, order=3)]
+    plan = plan_fallbacks(links, [100, 101], [1, 2], last_orders={1: 4, 2: 5})
+    assert plan.buried_links == [11]
+
+
+def test_a_fallback_already_last_stays_where_it_is():
+    links = [Link(10, 1, 100, order=4)]
+    plan = plan_fallbacks(links, [100], [1], last_orders={1: 4})
+    assert plan.buried_links == []
+
+
+def test_an_excluded_channel_is_not_moved_only_detached():
+    links = [Link(11, 9, 101, order=0)]
+    plan = plan_fallbacks(links, [101], [1], last_orders={9: 6})
+    assert plan.excluded_links == [11]
+    assert plan.buried_links == []

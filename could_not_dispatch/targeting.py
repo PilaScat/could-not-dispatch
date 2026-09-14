@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -73,6 +73,7 @@ class Link:
     id: int
     channel_id: int
     stream_id: int
+    order: int = 0
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ class FallbackPlan:
     shared_links: list[int]
     uncovered_channels: list[int]
     spare_streams: list[int]
+    excluded_links: list[int] = field(default_factory=list)
+    buried_links: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -87,24 +90,39 @@ class Attachment:
     attached: int
     separated: int
     created: int
+    detached: int = 0
+    moved: int = 0
 
 
 def plan_fallbacks(
-    links: Sequence[Link], stream_ids: Sequence[int], channel_ids: Sequence[int]
+    links: Sequence[Link],
+    stream_ids: Sequence[int],
+    channel_ids: Sequence[int],
+    last_orders: Mapping[int, int] | None = None,
 ) -> FallbackPlan:
+    targeted = set(channel_ids)
+    kept = [link for link in links if link.channel_id in targeted]
+    last_orders = last_orders or {}
+
     owned: set[int] = set()
     shared_links: list[int] = []
-    for link in sorted(links, key=lambda item: (item.stream_id, item.channel_id)):
+    for link in sorted(kept, key=lambda item: (item.stream_id, item.channel_id)):
         if link.stream_id in owned:
             shared_links.append(link.id)
         else:
             owned.add(link.stream_id)
 
-    covered = {link.channel_id for link in links}
+    covered = {link.channel_id for link in kept}
     return FallbackPlan(
         shared_links=shared_links,
         uncovered_channels=[channel_id for channel_id in channel_ids if channel_id not in covered],
         spare_streams=sorted(stream_id for stream_id in stream_ids if stream_id not in owned),
+        excluded_links=sorted(link.id for link in links if link.channel_id not in targeted),
+        buried_links=sorted(
+            link.id
+            for link in kept
+            if link.order < last_orders.get(link.channel_id, link.order)
+        ),
     )
 
 
@@ -126,12 +144,23 @@ def attach(name: str, url: str, channel_ids: Sequence[int]) -> Attachment:
         links = [
             Link(*row)
             for row in ChannelStream.objects.filter(stream_id__in=stream_ids).values_list(
-                "id", "channel_id", "stream_id"
+                "id", "channel_id", "stream_id", "order"
             )
         ]
-        plan = plan_fallbacks(links, stream_ids, channel_ids)
+        last_orders = {
+            row["channel_id"]: row["highest"]
+            for row in ChannelStream.objects.filter(
+                channel_id__in={link.channel_id for link in links}
+            )
+            .values("channel_id")
+            .annotate(highest=Max("order"))
+        }
+        plan = plan_fallbacks(links, stream_ids, channel_ids, last_orders)
         spare = list(plan.spare_streams)
         created = 0
+
+        if plan.excluded_links:
+            ChannelStream.objects.filter(id__in=plan.excluded_links).delete()
 
         def own_stream() -> int:
             nonlocal created
@@ -162,6 +191,13 @@ def attach(name: str, url: str, channel_ids: Sequence[int]) -> Attachment:
                 ignore_conflicts=True,
             )
 
+        channel_of = {link.id: link.channel_id for link in links}
+        for link_id in plan.buried_links:
+            channel_id = channel_of[link_id]
+            ChannelStream.objects.filter(id=link_id).update(
+                order=next_order(last_orders, channel_id)
+            )
+
         if spare:
             Stream.objects.filter(id__in=spare).delete()
 
@@ -169,6 +205,8 @@ def attach(name: str, url: str, channel_ids: Sequence[int]) -> Attachment:
         attached=len(plan.uncovered_channels),
         separated=len(plan.shared_links),
         created=created,
+        detached=len(plan.excluded_links),
+        moved=len(plan.buried_links),
     )
 
 
