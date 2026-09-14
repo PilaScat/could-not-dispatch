@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2 — 2026-09-14
+
+- Apply and Cover new channels now take the fallback off channels excluded since it was
+  attached, freeing their streams, and move it back to the end of a channel where a stream
+  was added after it. Before, a stream added later sat after the fallback, where the
+  failover never reaches it, and an exclusion only held for channels not yet covered.
+- The contract tests run the plugin's actions against a temporary runtime folder instead of
+  the checkout. Tests, types, lint and build run in CI; `docs/MEMORY.md` holds the
+  decisions, the deployment traps and the release routine.
+
 ## 0.3.1 — 2026-09-14
 
 - Cover new channels, pressed by hand, covers channels again while Cover new channels
