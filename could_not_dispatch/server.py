@@ -118,7 +118,8 @@ class Broadcaster:
         with self._lock:
             if self._closed:
                 raise RuntimeError("The fallback encoder is shutting down.")
-            primer = head_start(bytes(self._recent), self._prime_target)
+            running = self._process is not None and self._process.poll() is None
+            primer = head_start(bytes(self._recent), self._prime_target) if running else b""
             if primer:
                 subscriber.offer(primer)
             self._subscribers.add(subscriber)

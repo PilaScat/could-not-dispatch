@@ -200,6 +200,34 @@ def test_a_listener_after_a_restart_is_not_handed_stale_bytes():
         broadcaster.close()
 
 
+def test_a_listener_after_an_idle_stop_is_not_handed_the_previous_run():
+    from test_transport import packet
+
+    from could_not_dispatch.transport import TS_PACKET_SIZE
+
+    spawned: list[FakeProcess] = []
+    broadcaster = Broadcaster(
+        ["ffmpeg"],
+        spawn=_recording_spawn(spawned),
+        chunk_size=TS_PACKET_SIZE,
+        idle_seconds=0.05,
+    )
+    try:
+        listener = broadcaster.subscribe()
+        spawned[0].feed(packet(random_access=True, payload=1))
+        assert next(listener.chunks(3.0))
+        broadcaster.unsubscribe(listener)
+        assert _wait_until(lambda: spawned[0].poll() is not None)
+
+        late = broadcaster.subscribe()
+        assert len(spawned) == 2
+        assert list(late.chunks(0.2)) == []
+        spawned[1].feed(packet(random_access=True, payload=2))
+        assert next(late.chunks(3.0)) == packet(random_access=True, payload=2)
+    finally:
+        broadcaster.close()
+
+
 class _Served:
     def __init__(self, broadcaster: Broadcaster, chunk_timeout: float = 1.0) -> None:
         self.broadcaster = broadcaster
