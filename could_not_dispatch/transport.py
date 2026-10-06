@@ -30,6 +30,21 @@ def starts_random_access(packet: bytes) -> bool:
     return bool(packet[5] & 0x40)
 
 
+def starts_video_pes(packet: bytes) -> bool:
+    if len(packet) < TS_PACKET_SIZE or not packet[1] & 0x40:
+        return False
+    adaptation = (packet[3] >> 4) & 0x03
+    if adaptation == 2:
+        return False
+    start = 4 + (1 + packet[4] if adaptation == 3 else 0)
+    header = packet[start : start + 4]
+    return header[:3] == b"\x00\x00\x01" and len(header) == 4 and 0xE0 <= header[3] <= 0xEF
+
+
+def starts_picture(packet: bytes) -> bool:
+    return starts_random_access(packet) and starts_video_pes(packet)
+
+
 def entry_points(data: bytes) -> list[int]:
     start = find_alignment(data)
     if start < 0:
@@ -41,9 +56,8 @@ def entry_points(data: bytes) -> list[int]:
     while offset + TS_PACKET_SIZE <= len(data):
         packet = data[offset : offset + TS_PACKET_SIZE]
         if packet_pid(packet) == PAT_PID:
-            if table < 0:
-                table = offset
-        elif starts_random_access(packet):
+            table = offset
+        elif starts_picture(packet):
             points.append(table if table >= 0 else offset)
             table = -1
         offset += TS_PACKET_SIZE
