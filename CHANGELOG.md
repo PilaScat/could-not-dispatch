@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0 — 2026-10-07
+
+- The card starts on a picture. A viewer who reached the card while it was already playing
+  got a head start that could begin on an audio packet, because ffmpeg marks every AAC packet
+  for random access as well as the video keyframes: up to a second of pictures arrived
+  without the SPS/PPS needed to decode them. On 6 October 2026 a Plezy client on Android TV
+  gave up on 12 of the 13 cards it was sent, 1 to 4 seconds after opening them. The head start
+  now begins at the last PAT before a keyframe that opens a video PES; on three cuts of the
+  real card the first video packet is a keyframe and no frame lacks its PPS, against 24, 24
+  and 5 before.
+- A viewer who reaches the card after it stopped for lack of viewers no longer gets the bytes
+  of the previous run. Their timestamps ran ahead of the new run, which starts again from
+  zero, and the stream jumped backwards a few seconds in.
+- A channel goes back to its first stream after 30 seconds on the card instead of two
+  minutes, then after 1, 2 and 5 minutes, and every 5 minutes after that (it was 4, 8 and
+  15 minutes). A return made for a freed connection that lands on the card again within
+  30 seconds counts as a failure.
+
 ## 0.4.0 — 2026-09-14
 
 - A channel that lands on the fallback because the provider has no free connection goes back
