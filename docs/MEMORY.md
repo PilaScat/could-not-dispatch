@@ -15,8 +15,16 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   to `channel_start` and brings the process back, at most once a minute per uwsgi worker.
 - **The fallback stays last and off excluded channels.** Apply and Cover new channels detach it
   from channels excluded since, and move it back to the end where a stream was added after it.
-- **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 120 s on the card,
-  then after 4, 8 and 15 minutes. A channel on the card is recognised by its URL.
+- **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 30 s on the card,
+  then after 1, 2 and 5 minutes, then every 5 minutes (0.5.0; 120 s, 4, 8 and 15 minutes
+  before). A failed try costs the viewer about 3 s of chain walking per refusing stream while
+  the card stays on screen. A channel on the card is recognised by its URL.
+- **A late listener starts on a video picture.** The head start begins at the last PAT before
+  a packet that both carries the random-access flag and opens a video PES. ffmpeg's muxer sets
+  the flag on every AAC packet too, and up to 0.4.0 an audio packet could open the head start:
+  the client got up to a second of pictures without SPS/PPS, and Plezy gave up on 12 of 13
+  cards on 6 October 2026. A head start is only taken from a running encoder: after an idle
+  stop the buffer belongs to the previous run, whose timestamps run ahead of the new one.
 - **A full provider is remembered, not observed at the moment of the fallback** (0.4.0). With
   `channel_shutdown_delay` at 0 the channel a viewer left frees its connection within a couple
   of seconds, so by the next poll the provider may have room again. The status is therefore

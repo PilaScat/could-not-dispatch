@@ -77,10 +77,15 @@ class FakeApi:
         self.take_off_slate(uuid)
 
 
-def build(watching: int = 1) -> tuple[Recovery, FakeApi, list[str]]:
+def build(
+    watching: int = 1, waits: tuple[float, ...] | None = None
+) -> tuple[Recovery, FakeApi, list[str]]:
     api = FakeApi()
     lines: list[str] = []
-    recovery = Recovery(api, SLATE_URL, lambda: watching, lines.append)
+    if waits is None:
+        recovery = Recovery(api, SLATE_URL, lambda: watching, lines.append)
+    else:
+        recovery = Recovery(api, SLATE_URL, lambda: watching, lines.append, waits=waits)
     return recovery, api, lines
 
 
@@ -96,14 +101,14 @@ def run(recovery: Recovery, start: float, end: float, step: float = 10.0) -> Non
         recovery.tick(now)
 
 
-def test_a_channel_on_the_fallback_goes_back_to_its_first_stream_after_two_minutes():
+def test_a_channel_on_the_fallback_goes_back_to_its_first_stream_after_thirty_seconds():
     recovery, api, lines = build()
     api.put_on_slate(WEB3)
-    run(recovery, 0, 110)
+    run(recovery, 0, 20)
     assert api.changes == []
-    recovery.tick(120)
+    recovery.tick(30)
     assert api.changes == [(WEB3, 2262)]
-    assert lines[-1] == f"sent Channel {WEB3} back to stream 2262 after 120s on the fallback"
+    assert lines[-1] == f"sent Channel {WEB3} back to stream 2262 after 30s on the fallback"
 
 
 def test_nothing_is_sent_back_while_nobody_watches_the_fallback():
@@ -125,37 +130,37 @@ def test_the_wait_grows_after_each_failed_attempt():
     api.change_fails = True
     api.put_on_slate(WEB3)
     attempts: list[float] = []
-    for now in seconds(0, 1800):
+    for now in seconds(0, 1200):
         before = len(lines)
         recovery.tick(now)
         if len(lines) > before:
             attempts.append(now)
-    assert attempts == [120, 360, 840, 1740]
+    assert attempts == [30, 90, 210, 510, 810, 1110]
     assert "could not send" in lines[0]
 
 
 def test_a_channel_that_falls_back_again_waits_longer_before_the_next_try():
     recovery, api, _ = build()
     api.put_on_slate(WEB3)
-    run(recovery, 0, 120)
+    run(recovery, 0, 30)
     assert len(api.changes) == 1
-    run(recovery, 130, 190)
+    run(recovery, 40, 100)
     api.put_on_slate(WEB3)
-    run(recovery, 200, 430)
+    run(recovery, 110, 160)
     assert len(api.changes) == 1
-    recovery.tick(440)
+    recovery.tick(170)
     assert len(api.changes) == 2
 
 
 def test_the_wait_starts_over_once_the_channel_has_settled_on_a_real_stream():
     recovery, api, _ = build()
     api.put_on_slate(WEB3)
-    run(recovery, 0, 120)
-    run(recovery, 130, 1100)
+    run(recovery, 0, 30)
+    run(recovery, 40, 1000)
     api.put_on_slate(WEB3)
-    run(recovery, 1110, 1220)
+    run(recovery, 1010, 1030)
     assert len(api.changes) == 1
-    recovery.tick(1230)
+    recovery.tick(1040)
     assert len(api.changes) == 2
 
 
@@ -207,7 +212,7 @@ def test_a_channel_created_after_the_catalogue_was_read_is_looked_up_again():
 
 
 def test_a_first_stream_of_unknown_account_is_looked_up_again_every_thirty_seconds_at_most():
-    recovery, api, _ = build()
+    recovery, api, _ = build(waits=(600.0,))
     api.chain[WEB3] = [2270, OWN_SLATE[WEB3]]
     recovery.tick(0)
     assert api.catalogue_calls == 1
@@ -254,16 +259,16 @@ def test_while_the_provider_stays_full_nothing_is_tried_and_the_check_runs_every
     assert recovery.interval == 10.0
 
 
-def test_a_full_provider_seen_long_before_the_fallback_keeps_the_two_minute_wait():
+def test_a_full_provider_seen_long_before_the_fallback_keeps_the_usual_wait():
     recovery, api, _ = build()
     api.busy = 3
     recovery.tick(0)
     api.busy = 1
     run(recovery, 10, 30)
     api.put_on_slate(WEB3)
-    run(recovery, 40, 150)
+    run(recovery, 40, 60)
     assert api.changes == []
-    recovery.tick(160)
+    recovery.tick(70)
     assert api.changes == [(WEB3, 2262)]
 
 
@@ -300,13 +305,13 @@ def test_a_channel_back_on_the_fallback_soon_after_a_crowded_return_waits_like_a
     api.put_on_slate(WEB3)
     recovery.tick(2)
     assert len(api.changes) == 1
-    run(recovery, 12, 32)
+    recovery.tick(12)
     api.busy = 3
     api.put_on_slate(WEB3)
     api.busy = 2
-    run(recovery, 42, 272)
+    run(recovery, 24, 74)
     assert len(api.changes) == 1
-    recovery.tick(282)
+    recovery.tick(84)
     assert len(api.changes) == 2
 
 
