@@ -45,7 +45,7 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 
 - Dispatcharr passes `params` to `run()` and never puts them in `context`. An action started by
   an event gets `{"event": ..., "payload": ...}`; a button gets `{}`.
-- Only the events in `apps/connect/models.py:SUPPORTED_EVENTS` reach a plugin: 19 in 0.31.0.
+- Only the events in `apps/connect/models.py:SUPPORTED_EVENTS` reach a plugin: 20 in 0.32.0.
   `tests/test_plugin_contract.py` keeps that list.
 - From Dispatcharr 0.31.0 a profile URL transform that does not match fails closed. The
   `custom` account's default profile must keep `^(.*)$` → `$1`, or the slate cannot start.
