@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0 — 2026-10-24
+
+- **A second card for a channel that reached the fallback because the provider was full.**
+  With **Image or video when the provider is full** set and an API key, a channel whose every
+  source belongs to a provider account that was at its connection limit in the last 20 seconds
+  gets that card, so it can say that every connection is in use; every other channel gets the
+  usual one. Each fallback stream now points at the card with its channel,
+  `slate.ts?channel=<uuid>`, rewritten by the next Apply or Cover new channels. Only these two
+  cases are told apart: Dispatcharr does not tell a plugin why each stream failed, so a broken
+  link and a passing outage look the same
+  ([#1](https://github.com/PilaScat/could-not-dispatch/issues/1), from
+  [@ckegels](https://github.com/ckegels)).
+
 ## 0.5.1 — 2026-10-24
 
 - The card starts on FFmpeg older than 6.1, which has no `-readrate_initial_burst`: Ubuntu
