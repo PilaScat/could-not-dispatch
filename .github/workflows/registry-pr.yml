@@ -35,7 +35,8 @@ jobs:
           RAW_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
           GH_TOKEN: ${{ secrets.REGISTRY_PR_TOKEN }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'echo "::error::line $LINENO failed: $BASH_COMMAND"' ERR
 
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::REGISTRY_PR_TOKEN secret is not set. Create a classic PAT on the PilaScat account scoped to 'public_repo' only and add it as the REGISTRY_PR_TOKEN repo secret."
