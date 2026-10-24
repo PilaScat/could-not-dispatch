@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1 — 2026-10-24
+
+- The card starts on FFmpeg older than 6.1, which has no `-readrate_initial_burst`: Ubuntu
+  22.04 ships 4.4 and Debian 12 ships 5.1, and on a native install the encoder exited at once
+  and every channel sent to the card froze for 20 seconds. The server asks ffmpeg once whether
+  it has the option and otherwise paces with `-re`, a few seconds slower to the first picture.
+  Thanks to [@MrBoyd23](https://github.com/MrBoyd23), who found it and wrote the fix (#2, #3).
+
 ## 0.5.0 — 2026-10-07
 
 - The card starts on a picture. A viewer who reached the card while it was already playing

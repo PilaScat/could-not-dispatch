@@ -36,7 +36,7 @@ from .constants import (
     STREAM_PATH,
     SUBSCRIBER_QUEUE_CHUNKS,
 )
-from .encoder import EncodeOptions, build_command
+from .encoder import EncodeOptions, build_command, ffmpeg_supports_readrate
 from .media import Media
 from .recovery import Dispatcharr, Recovery
 from .transport import head_start
@@ -379,7 +379,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     media = Media(path=Path(args.media), kind=args.kind, has_audio=args.has_audio)
     options = EncodeOptions.normalized(args.width, args.height, args.fps, args.video_kbps)
-    broadcaster = Broadcaster(build_command(media, options))
+    broadcaster = Broadcaster(
+        build_command(media, options, supports_readrate=ffmpeg_supports_readrate())
+    )
     server = SlateServer((args.host, args.port), broadcaster, args.path)
     recovery = build_recovery(
         slate_url(args.host, args.port, args.path), os.environ.get(API_KEY_ENV, ""), broadcaster

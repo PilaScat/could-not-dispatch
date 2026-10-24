@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+import subprocess
 from dataclasses import dataclass
 
 from .constants import (
@@ -105,14 +107,36 @@ def scale_filter(options: EncodeOptions) -> str:
     )
 
 
-def build_command(media: Media, options: EncodeOptions, executable: str = "ffmpeg") -> list[str]:
+@functools.cache
+def ffmpeg_supports_readrate(executable: str = "ffmpeg") -> bool:
+    try:
+        probe = subprocess.run(
+            [executable, "-hide_banner", "-h", "full"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "readrate_initial_burst" in probe.stdout
+
+
+def build_command(
+    media: Media,
+    options: EncodeOptions,
+    executable: str = "ffmpeg",
+    supports_readrate: bool = True,
+) -> list[str]:
     command = [executable, "-hide_banner", "-loglevel", "error", "-nostdin"]
-    pacing = [
-        "-readrate",
-        "1",
-        "-readrate_initial_burst",
-        str(options.initial_burst_seconds),
-    ]
+    if supports_readrate:
+        pacing = [
+            "-readrate",
+            "1",
+            "-readrate_initial_burst",
+            str(options.initial_burst_seconds),
+        ]
+    else:
+        pacing = ["-re"]
 
     if media.kind == KIND_IMAGE:
         command += [*pacing, "-loop", "1", "-i", str(media.path)]

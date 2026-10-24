@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from could_not_dispatch.constants import DEFAULT_FPS, KIND_IMAGE, KIND_VIDEO
-from could_not_dispatch.encoder import EncodeOptions, build_command, scale_filter
+from could_not_dispatch.encoder import (
+    EncodeOptions,
+    build_command,
+    ffmpeg_supports_readrate,
+    scale_filter,
+)
 from could_not_dispatch.media import Media
 
 
@@ -18,6 +24,17 @@ def test_the_first_seconds_are_produced_as_fast_as_possible():
     assert "-re" not in command
     assert command[command.index("-readrate") + 1] == "1"
     assert int(command[command.index("-readrate_initial_burst") + 1]) >= 3
+
+
+def test_an_ffmpeg_without_readrate_falls_back_to_steady_pacing():
+    command = build_command(
+        Media(Path("/data/slate.png"), KIND_IMAGE, has_audio=False),
+        _options(),
+        supports_readrate=False,
+    )
+    assert "-re" in command
+    assert "-readrate" not in command
+    assert "-readrate_initial_burst" not in command
 
 
 def test_the_burst_covers_both_the_megabyte_and_the_encoder_lookahead():
@@ -188,3 +205,40 @@ def test_half_a_size_is_treated_as_no_size_rather_than_a_squashed_frame():
 def test_the_frame_falls_back_to_720p_when_nothing_is_known():
     options = EncodeOptions.normalized()
     assert (options.width, options.height) == (1280, 720)
+
+
+class _FakeCompletedProcess:
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+
+
+def test_ffmpeg_supports_readrate_reads_the_build_s_own_help_text(monkeypatch):
+    def fake_run(command, **kwargs):
+        assert command[0] == "ffmpeg-6.1-build"
+        assert "-h" in command and "full" in command
+        return _FakeCompletedProcess(stdout="... -readrate ... -readrate_initial_burst ...")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ffmpeg_supports_readrate("ffmpeg-6.1-build") is True
+
+
+def test_ffmpeg_supports_readrate_is_false_on_an_older_build(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: _FakeCompletedProcess(""))
+    assert ffmpeg_supports_readrate("ffmpeg-4.4-build") is False
+
+
+def test_an_ffmpeg_with_readrate_but_no_initial_burst_counts_as_unsupported(monkeypatch):
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **kwargs: _FakeCompletedProcess("... -readrate ...")
+    )
+    assert ffmpeg_supports_readrate("ffmpeg-5.1-build") is False
+
+
+def test_ffmpeg_supports_readrate_is_false_rather_than_raising_when_ffmpeg_is_missing(
+    monkeypatch,
+):
+    def fake_run(command, **kwargs):
+        raise FileNotFoundError(command[0])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ffmpeg_supports_readrate("ffmpeg-missing-build") is False
