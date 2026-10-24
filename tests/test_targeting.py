@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from could_not_dispatch.targeting import (
     Link,
+    card_urls,
     next_order,
     parse_lines,
     plan_fallbacks,
@@ -105,3 +106,15 @@ def test_an_excluded_channel_is_not_moved_only_detached():
     plan = plan_fallbacks(links, [101], [1], last_orders={9: 6})
     assert plan.excluded_links == [11]
     assert plan.buried_links == []
+
+
+def test_every_fallback_stream_points_at_the_card_with_its_own_channel():
+    urls = card_urls(
+        "http://127.0.0.1:9721/slate.ts",
+        [(1, 22924), (2, 22931), (3, 22999)],
+        {1: "uuid-web3", 2: "uuid-calcio"},
+    )
+    assert urls == {
+        22924: "http://127.0.0.1:9721/slate.ts?channel=uuid-web3",
+        22931: "http://127.0.0.1:9721/slate.ts?channel=uuid-calcio",
+    }

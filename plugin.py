@@ -158,12 +158,13 @@ class Plugin:
 
         resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
         media = media_module.inspect(resolved.path)
+        full = self._full_media(settings)
         options = self._encode_options(settings, media)
 
         api_key = _api_key(settings)
-        signature = self._signature(media, options, port, bool(api_key))
+        signature = self._signature(media, options, port, bool(api_key), full)
 
-        started = self._ensure_process(signature, media, options, port, api_key)
+        started = self._ensure_process(signature, media, options, port, api_key, full)
 
         channel_ids = targeting.target_channel_ids(
             settings.get("exclude_groups"), settings.get("exclude_channels")
@@ -175,7 +176,7 @@ class Plugin:
         return {
             "status": "ok",
             "message": self._apply_message(
-                resolved, media, options, started, attachment, len(channel_ids)
+                resolved, media, options, started, attachment, len(channel_ids), full, api_key
             ),
         }
 
@@ -187,6 +188,8 @@ class Plugin:
         started: bool,
         attachment: targeting.Attachment,
         covered: int,
+        full: media_module.Media | None = None,
+        api_key: str = "",
     ) -> str:
         parts = [
             f"Fallback {'started' if started else 'already running'} from the "
@@ -194,6 +197,13 @@ class Plugin:
         ]
         if resolved.from_cache:
             parts.append("The download failed, so the cached copy is in use.")
+        if full is not None:
+            parts.append(
+                f"A channel that reaches it with the provider full gets the {full.kind} "
+                "set for that."
+                if api_key
+                else "The card for a full provider needs the API key, so it is not in use."
+            )
         parts.append(self._coverage_message(attachment, covered))
         return " ".join(parts)
 
@@ -251,7 +261,13 @@ class Plugin:
         port = _as_int(settings.get("port"), DEFAULT_PORT)
         resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
         media = media_module.inspect(resolved.path)
-        self._start_process(media, self._encode_options(settings, media), port, _api_key(settings))
+        self._start_process(
+            media,
+            self._encode_options(settings, media),
+            port,
+            _api_key(settings),
+            self._full_media(settings),
+        )
         return {"status": "ok", "message": "Fallback restarted."}
 
     def _status(self, context: dict) -> dict:
@@ -303,6 +319,7 @@ class Plugin:
         options: EncodeOptions,
         port: int,
         api_key: str,
+        full: media_module.Media | None = None,
     ) -> bool:
         state = self._state()
         pid = state.get("pid")
@@ -311,7 +328,7 @@ class Plugin:
             if state.get("signature") == signature:
                 return False
             process.terminate(pid, token)
-        self._start_process(media, options, port, api_key)
+        self._start_process(media, options, port, api_key, full)
         return True
 
     def _stop_fallback(self, settings: dict) -> bool:
@@ -328,6 +345,7 @@ class Plugin:
         options: EncodeOptions,
         port: int,
         api_key: str,
+        full: media_module.Media | None = None,
     ) -> None:
         if not process.port_is_free(LISTEN_HOST, port):
             reclaimed = process.terminate_strays(port)
@@ -366,6 +384,10 @@ class Plugin:
         ]
         if media.has_audio:
             arguments.append("--has-audio")
+        if full is not None:
+            arguments += ["--full-media", str(full.path), "--full-kind", full.kind]
+            if full.has_audio:
+                arguments.append("--full-has-audio")
 
         pid = process.spawn(
             BASE_DIR,
@@ -427,9 +449,13 @@ class Plugin:
         options: EncodeOptions,
         port: int,
         recovery: bool,
+        full: media_module.Media | None = None,
     ) -> str:
         return json.dumps(
             {
+                "full_media": str(full.path) if full else "",
+                "full_kind": full.kind if full else "",
+                "full_has_audio": full.has_audio if full else False,
                 "media": str(media.path),
                 "kind": media.kind,
                 "has_audio": media.has_audio,
@@ -442,6 +468,13 @@ class Plugin:
             },
             sort_keys=True,
         )
+
+    def _full_media(self, settings: dict) -> media_module.Media | None:
+        source = str(settings.get("media_source_full") or "").strip()
+        if not source:
+            return None
+        resolved = media_module.resolve(source, MEDIA_CACHE_DIR)
+        return media_module.inspect(resolved.path)
 
     def _stream_url(self, port: int) -> str:
         return slate_url(LISTEN_HOST, port, STREAM_PATH)

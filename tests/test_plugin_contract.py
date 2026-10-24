@@ -221,6 +221,7 @@ def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
     declared = {field["id"] for field in manifest["fields"]}
     used = {
         "media_source",
+        "media_source_full",
         "port",
         "width",
         "height",
@@ -232,3 +233,46 @@ def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
         "api_key",
     }
     assert used <= declared
+
+
+def _started_arguments(loaded_module, monkeypatch, full) -> list[str]:
+    spawned: list[list[str]] = []
+
+    def spawn(_base, arguments, *_args, **_kwargs):
+        spawned.append(arguments)
+        return 4242
+
+    monkeypatch.setattr(loaded_module.process, "port_is_free", lambda *_a: True)
+    monkeypatch.setattr(loaded_module.process, "spawn", spawn)
+    monkeypatch.setattr(loaded_module.Plugin, "_wait_for_port", lambda self, port: True)
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    options = loaded_module.EncodeOptions.normalized()
+    loaded_module.Plugin()._start_process(card, options, 9721, "key", full)
+    return spawned[0]
+
+
+def test_the_card_for_a_full_provider_reaches_the_server(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    full = loaded_module.media_module.Media(Path("/data/full.mp4"), "video", has_audio=True)
+    arguments = _started_arguments(loaded_module, monkeypatch, full)
+    assert arguments[arguments.index("--full-media") + 1] == str(Path("/data/full.mp4"))
+    assert arguments[arguments.index("--full-kind") + 1] == "video"
+    assert "--full-has-audio" in arguments
+
+
+def test_without_a_card_for_a_full_provider_the_server_gets_none(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    arguments = _started_arguments(loaded_module, monkeypatch, None)
+    assert "--full-media" not in arguments
+
+
+def test_setting_a_card_for_a_full_provider_restarts_the_fallback(loaded_module):
+    plugin = loaded_module.Plugin()
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    full = loaded_module.media_module.Media(Path("/data/full.png"), "image", has_audio=False)
+    options = loaded_module.EncodeOptions.normalized()
+    assert plugin._signature(card, options, 9721, True) != plugin._signature(
+        card, options, 9721, True, full
+    )

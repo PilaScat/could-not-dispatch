@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .constants import (
     API_KEY_ENV,
@@ -38,7 +38,7 @@ from .constants import (
 )
 from .encoder import EncodeOptions, build_command, ffmpeg_supports_readrate
 from .media import Media
-from .recovery import Dispatcharr, Recovery
+from .recovery import CHANNEL_PARAMETER, Dispatcharr, Recovery
 from .transport import head_start
 
 CHUNK_TIMEOUT = 20.0
@@ -278,11 +278,20 @@ class SlateServer(ThreadingHTTPServer):
         broadcaster: Broadcaster,
         stream_path: str,
         chunk_timeout: float = CHUNK_TIMEOUT,
+        crowded_broadcaster: Broadcaster | None = None,
+        crowded: Callable[[str], bool] | None = None,
     ) -> None:
         self.broadcaster = broadcaster
         self.stream_path = stream_path
         self.chunk_timeout = chunk_timeout
+        self.crowded_broadcaster = crowded_broadcaster
+        self.crowded = crowded or (lambda uuid: False)
         super().__init__(address, SlateHandler)
+
+    def card_for(self, channel: str) -> Broadcaster:
+        if self.crowded_broadcaster is not None and channel and self.crowded(channel):
+            return self.crowded_broadcaster
+        return self.broadcaster
 
 
 class SlateHandler(BaseHTTPRequestHandler):
@@ -333,7 +342,9 @@ class SlateHandler(BaseHTTPRequestHandler):
             self._send_stream_headers()
             return
 
-        subscriber = self.server.broadcaster.subscribe()
+        channel = parse_qs(urlparse(self.path).query).get(CHANNEL_PARAMETER, [""])[0]
+        broadcaster = self.server.card_for(channel)
+        subscriber = broadcaster.subscribe()
         try:
             stream = subscriber.chunks(self.server.chunk_timeout)
             first = next(stream, None)
@@ -347,7 +358,7 @@ class SlateHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
-            self.server.broadcaster.unsubscribe(subscriber)
+            broadcaster.unsubscribe(subscriber)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -355,6 +366,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--media", required=True)
     parser.add_argument("--kind", choices=[KIND_IMAGE, KIND_VIDEO], required=True)
     parser.add_argument("--has-audio", action="store_true")
+    parser.add_argument("--full-media")
+    parser.add_argument("--full-kind", choices=[KIND_IMAGE, KIND_VIDEO])
+    parser.add_argument("--full-has-audio", action="store_true")
     parser.add_argument("--host", default=LISTEN_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--path", default=STREAM_PATH)
@@ -369,22 +383,36 @@ def slate_url(host: str, port: int, path: str) -> str:
     return f"http://{host}:{port}{path}"
 
 
-def build_recovery(url: str, api_key: str, broadcaster: Broadcaster) -> Recovery | None:
+def build_recovery(url: str, api_key: str, *broadcasters: Broadcaster) -> Recovery | None:
     if not api_key:
         return None
-    return Recovery(Dispatcharr(DISPATCHARR_URL, api_key), url, broadcaster.subscriber_count, _log)
+
+    def watching() -> int:
+        return sum(broadcaster.subscriber_count() for broadcaster in broadcasters)
+
+    return Recovery(Dispatcharr(DISPATCHARR_URL, api_key), url, watching, _log)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     media = Media(path=Path(args.media), kind=args.kind, has_audio=args.has_audio)
     options = EncodeOptions.normalized(args.width, args.height, args.fps, args.video_kbps)
-    broadcaster = Broadcaster(
-        build_command(media, options, supports_readrate=ffmpeg_supports_readrate())
-    )
-    server = SlateServer((args.host, args.port), broadcaster, args.path)
+    readrate = ffmpeg_supports_readrate()
+    broadcaster = Broadcaster(build_command(media, options, supports_readrate=readrate))
+    crowded_broadcaster = None
+    if args.full_media and args.full_kind:
+        full = Media(path=Path(args.full_media), kind=args.full_kind, has_audio=args.full_has_audio)
+        crowded_broadcaster = Broadcaster(build_command(full, options, supports_readrate=readrate))
+    cards = [broadcaster] if crowded_broadcaster is None else [broadcaster, crowded_broadcaster]
     recovery = build_recovery(
-        slate_url(args.host, args.port, args.path), os.environ.get(API_KEY_ENV, ""), broadcaster
+        slate_url(args.host, args.port, args.path), os.environ.get(API_KEY_ENV, ""), *cards
+    )
+    server = SlateServer(
+        (args.host, args.port),
+        broadcaster,
+        args.path,
+        crowded_broadcaster=crowded_broadcaster,
+        crowded=recovery.crowded if recovery is not None else None,
     )
 
     def request_shutdown(signum: int, frame: FrameType | None) -> None:
@@ -396,6 +424,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             signal.signal(handler, request_shutdown)
 
     _log(f"serving {args.path} on {args.host}:{args.port} from {args.media}")
+    if crowded_broadcaster is not None:
+        _log(f"channels that reach it with the provider full get {args.full_media}")
     if recovery is not None:
         recovery.start()
         _log(
@@ -408,7 +438,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if recovery is not None:
             recovery.stop()
-        broadcaster.close()
+        for card in cards:
+            card.close()
         server.server_close()
     return 0
 

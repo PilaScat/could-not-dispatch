@@ -14,6 +14,8 @@ from could_not_dispatch.recovery import (
     Recovery,
     SlatedChannel,
     Status,
+    channel_card_url,
+    is_card_url,
 )
 from could_not_dispatch.server import Broadcaster, build_recovery, slate_url
 
@@ -57,12 +59,14 @@ class FakeApi:
             raise ApiError("GET /proxy/ts/status failed: timed out")
         return Status(slated=list(self.slated.values()), usage={PROVIDER_PROFILE: self.busy})
 
-    def catalogue(self) -> Catalogue:
+    def catalogue(self, url: str) -> Catalogue:
+        assert url == SLATE_URL
         self.catalogue_calls += 1
         return Catalogue(
             chains={uuid: list(streams) for uuid, streams in self.chain.items()},
             accounts=dict(self.accounts),
             limits={account: dict(profiles) for account, profiles in self.limits.items()},
+            slates=frozenset(OWN_SLATE.values()),
         )
 
     def change_stream(self, uuid: str, stream_id: int) -> None:
@@ -388,7 +392,9 @@ def test_the_catalogue_follows_pages_and_skips_inactive_accounts_and_profiles(ro
                 "next": None,
             },
             "/api/channels/streams/?page_size=9000": [
-                {"id": 2262, "m3u_account": PROVIDER}, {"id": 22924, "m3u_account": CUSTOM},
+                {"id": 2262, "m3u_account": PROVIDER, "url": "http://provider/2262.ts"},
+                {"id": 22924, "m3u_account": CUSTOM, "url": channel_card_url(SLATE_URL, WEB3)},
+                {"id": 23660, "m3u_account": PROVIDER, "url": f"{SLATE_URL}?bench=a"},
             ],
             "/api/m3u/accounts/": [
                 {"id": PROVIDER, "is_active": True, "profiles": [
@@ -399,10 +405,71 @@ def test_the_catalogue_follows_pages_and_skips_inactive_accounts_and_profiles(ro
             ],
         }
     )
-    catalogue = Dispatcharr("http://dispatcharr", "key").catalogue()
+    catalogue = Dispatcharr("http://dispatcharr", "key").catalogue(SLATE_URL)
     assert catalogue.chains == {WEB3: [2262, 2263, 22924], "uuid-vetrina": [22929, 22930]}
-    assert catalogue.accounts == {2262: PROVIDER, 22924: CUSTOM}
+    assert catalogue.accounts == {2262: PROVIDER, 22924: CUSTOM, 23660: PROVIDER}
     assert catalogue.limits == {PROVIDER: {PROVIDER_PROFILE: 3}}
+    assert catalogue.slates == {22924}
+
+
+def test_a_card_url_is_the_slate_with_at_most_the_channel_it_belongs_to():
+    assert is_card_url(SLATE_URL, SLATE_URL)
+    assert is_card_url(channel_card_url(SLATE_URL, WEB3), SLATE_URL)
+    assert channel_card_url(SLATE_URL, WEB3) == f"{SLATE_URL}?channel={WEB3}"
+    assert not is_card_url(f"{SLATE_URL}?bench=a", SLATE_URL)
+    assert not is_card_url("http://127.0.0.1:9721/other.ts?channel=x", SLATE_URL)
+    assert not is_card_url("", SLATE_URL)
+
+
+def test_status_counts_a_channel_on_its_own_card_url_as_on_the_fallback(routed):
+    routed(
+        {
+            "/proxy/ts/status": {
+                "channels": [
+                    {"channel_id": WEB3, "channel_name": "DAZN Web 3", "stream_id": 22924,
+                     "url": channel_card_url(SLATE_URL, WEB3), "client_count": 1,
+                     "m3u_profile_id": CUSTOM_PROFILE},
+                ]
+            }
+        }
+    )
+    status = Dispatcharr("http://dispatcharr", "key").status(SLATE_URL)
+    assert [channel.uuid for channel in status.slated] == [WEB3]
+    assert status.usage == {}
+
+
+def test_a_channel_is_crowded_while_every_source_of_it_is_on_a_full_account():
+    recovery, api, _ = build()
+    api.busy = 3
+    recovery.tick(0)
+    assert recovery.crowded(WEB3, 5)
+    assert recovery.crowded(CALCIO, 20)
+    assert not recovery.crowded(WEB3, 21)
+
+
+def test_a_channel_with_a_source_on_an_account_with_room_is_not_crowded():
+    recovery, api, _ = build()
+    api.limits[7] = {8: 5}
+    api.accounts[3001] = 7
+    api.chain[WEB3] = [2262, 3001, OWN_SLATE[WEB3]]
+    api.busy = 3
+    recovery.tick(0)
+    assert not recovery.crowded(WEB3, 1)
+    assert recovery.crowded(CALCIO, 1)
+
+
+def test_a_channel_the_catalogue_does_not_know_is_not_crowded():
+    recovery, api, _ = build()
+    api.busy = 3
+    recovery.tick(0)
+    assert not recovery.crowded("uuid-new", 1)
+
+
+def test_nothing_is_crowded_while_the_provider_has_room():
+    recovery, api, _ = build()
+    api.busy = 2
+    recovery.tick(0)
+    assert not recovery.crowded(WEB3, 1)
 
 
 def test_changing_stream_posts_the_stream_id_with_the_key(routed):
@@ -426,3 +493,16 @@ def test_the_server_sends_channels_back_only_with_a_key():
 
 def test_the_server_watches_the_url_the_plugin_attaches():
     assert slate_url("127.0.0.1", 9721, "/slate.ts") == SLATE_URL
+
+
+def test_viewers_of_either_card_count_as_watching_the_fallback(monkeypatch):
+    plain, full = Broadcaster(["ffmpeg"]), Broadcaster(["ffmpeg"])
+    monkeypatch.setattr(plain, "subscriber_count", lambda: 0)
+    monkeypatch.setattr(full, "subscriber_count", lambda: 2)
+    try:
+        recovery = build_recovery(SLATE_URL, "key", plain, full)
+        assert recovery is not None
+        assert recovery._watching() == 2
+    finally:
+        plain.close()
+        full.close()

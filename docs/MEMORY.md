@@ -18,7 +18,18 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 - **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 30 s on the card,
   then after 1, 2 and 5 minutes, then every 5 minutes (0.5.0; 120 s, 4, 8 and 15 minutes
   before). A failed try costs the viewer about 3 s of chain walking per refusing stream while
-  the card stays on screen. A channel on the card is recognised by its URL.
+  the card stays on screen. A channel on the card is recognised by its URL: the slate URL
+  alone or with `?channel=<uuid>` and nothing else, so the bench's `?bench=a` stays a provider
+  stream.
+- **A second card for a full provider** (0.6.0, issue #1, chosen by the operator on 24 October
+  2026: two cards, not the three asked for). Each fallback stream points at
+  `slate.ts?channel=<uuid>`, so the server knows the channel at connect time and serves the
+  second encoder when every source of the chain, cards left out, belongs to an account full in
+  the last 20 s (`Recovery.crowded`). The cards are recognised in the catalogue by their URL,
+  since they sit on the `custom` account, which has no limit and would never read as full. A
+  broken link and a passing outage cannot be told apart: Dispatcharr does not tell a plugin
+  why each stream failed. A provider that fills up less than one poll (10 s) before the
+  failover is not seen yet, and the channel gets the usual card.
 - **A late listener starts on a video picture.** The head start begins at the last PAT before
   a packet that both carries the random-access flag and opens a video PES. ffmpeg's muxer sets
   the flag on every AAC packet too, and up to 0.4.0 an audio packet could open the head start:

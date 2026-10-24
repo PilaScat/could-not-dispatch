@@ -4,6 +4,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .recovery import channel_card_url
+
 
 def parse_lines(raw: object) -> list[str]:
     if not raw:
@@ -126,6 +128,16 @@ def plan_fallbacks(
     )
 
 
+def card_urls(
+    slate_url: str, links: Sequence[tuple[int, int]], uuids: Mapping[int, str]
+) -> dict[int, str]:
+    return {
+        stream_id: channel_card_url(slate_url, uuids[channel_id])
+        for channel_id, stream_id in links
+        if channel_id in uuids
+    }
+
+
 def _fallback_streams(name: str) -> Any:
     from apps.channels.models import Stream
 
@@ -133,13 +145,12 @@ def _fallback_streams(name: str) -> Any:
 
 
 def attach(name: str, url: str, channel_ids: Sequence[int]) -> Attachment:
-    from apps.channels.models import ChannelStream, Stream
+    from apps.channels.models import Channel, ChannelStream, Stream
     from django.db import transaction
     from django.db.models import Max
 
     with transaction.atomic():
         streams = _fallback_streams(name)
-        streams.exclude(url=url).update(url=url)
         stream_ids = list(streams.values_list("id", flat=True))
         links = [
             Link(*row)
@@ -200,6 +211,20 @@ def attach(name: str, url: str, channel_ids: Sequence[int]) -> Attachment:
 
         if spare:
             Stream.objects.filter(id__in=spare).delete()
+
+        owned = list(
+            ChannelStream.objects.filter(stream__in=_fallback_streams(name)).values_list(
+                "channel_id", "stream_id"
+            )
+        )
+        uuids = {
+            channel_id: str(uuid)
+            for channel_id, uuid in Channel.objects.filter(
+                id__in={channel_id for channel_id, _ in owned}
+            ).values_list("id", "uuid")
+        }
+        for stream_id, card_url in card_urls(url, owned, uuids).items():
+            Stream.objects.filter(id=stream_id).exclude(url=card_url).update(url=card_url)
 
     return Attachment(
         attached=len(plan.uncovered_channels),

@@ -24,6 +24,7 @@ from .constants import (
 
 ERROR_BODY_CHARS = 200
 CAPACITY_MARKER = "capacity"
+CHANNEL_PARAMETER = "channel"
 
 
 class ApiError(RuntimeError):
@@ -49,6 +50,7 @@ class Catalogue:
     chains: dict[str, list[int]] = field(default_factory=dict)
     accounts: dict[int, int] = field(default_factory=dict)
     limits: dict[int, dict[int, int]] = field(default_factory=dict)
+    slates: frozenset[int] = frozenset()
 
 
 def _as_int(value: object) -> int:
@@ -73,10 +75,21 @@ def _local_path(url: object) -> str:
     return f"{parts.path}?{parts.query}" if parts.query else parts.path
 
 
+def channel_card_url(slate_url: str, uuid: str) -> str:
+    return f"{slate_url}?{urllib.parse.urlencode({CHANNEL_PARAMETER: uuid})}"
+
+
+def is_card_url(url: object, slate_url: str) -> bool:
+    parts = urllib.parse.urlsplit(str(url or ""))
+    if parts._replace(query="").geturl() != slate_url:
+        return False
+    return set(urllib.parse.parse_qs(parts.query)) <= {CHANNEL_PARAMETER}
+
+
 class ChannelApi(Protocol):
     def status(self, url: str) -> Status: ...
 
-    def catalogue(self) -> Catalogue: ...
+    def catalogue(self, url: str) -> Catalogue: ...
 
     def change_stream(self, uuid: str, stream_id: int) -> None: ...
 
@@ -95,7 +108,7 @@ class Dispatcharr:
             uuid = str(row.get("channel_id") or "")
             if not uuid:
                 continue
-            if str(row.get("url") or "") != url:
+            if not is_card_url(row.get("url"), url):
                 profile = _as_int(row.get("m3u_profile_id"))
                 if profile:
                     usage[profile] = usage.get(profile, 0) + 1
@@ -110,7 +123,7 @@ class Dispatcharr:
             )
         return Status(slated=slated, usage=usage)
 
-    def catalogue(self) -> Catalogue:
+    def catalogue(self, url: str) -> Catalogue:
         chains: dict[str, list[int]] = {}
         for row in self._collect("/api/channels/channels/?page_size=500"):
             uuid = str(row.get("uuid") or "")
@@ -118,10 +131,13 @@ class Dispatcharr:
                 streams = (_as_int(value) for value in row.get("streams") or [])
                 chains[uuid] = [stream for stream in streams if stream]
         accounts: dict[int, int] = {}
+        slates: set[int] = set()
         for row in self._collect("/api/channels/streams/?page_size=9000"):
             stream, account = _as_int(row.get("id")), _as_int(row.get("m3u_account"))
             if stream and account:
                 accounts[stream] = account
+            if stream and is_card_url(row.get("url"), url):
+                slates.add(stream)
         limits: dict[int, dict[int, int]] = {}
         for row in self._collect("/api/m3u/accounts/"):
             account = _as_int(row.get("id"))
@@ -132,7 +148,9 @@ class Dispatcharr:
                 for profile in row.get("profiles") or []
                 if isinstance(profile, dict) and profile.get("is_active") is not False
             }
-        return Catalogue(chains=chains, accounts=accounts, limits=limits)
+        return Catalogue(
+            chains=chains, accounts=accounts, limits=limits, slates=frozenset(slates)
+        )
 
     def change_stream(self, uuid: str, stream_id: int) -> None:
         self._request(
@@ -270,6 +288,19 @@ class Recovery:
                 self._consider(channel, now, room)
         self._forget_settled(now)
 
+    def crowded(self, uuid: str, now: float | None = None) -> bool:
+        moment = time.monotonic() if now is None else now
+        catalogue = self._catalogue
+        sources = [
+            stream for stream in catalogue.chains.get(uuid, []) if stream not in catalogue.slates
+        ]
+        if not sources:
+            return False
+        return all(
+            account is not None and self._was_full(account, moment)
+            for account in (self._account_of(stream) for stream in sources)
+        )
+
     def _since(self, channel: SlatedChannel, now: float) -> float:
         episode = self._episodes.get(channel.uuid)
         return episode.since if episode is not None else now
@@ -346,7 +377,7 @@ class Recovery:
             or (unknown and age >= CATALOGUE_RETRY_SECONDS)
         )
         if stale:
-            self._catalogue = self._api.catalogue()
+            self._catalogue = self._api.catalogue(self._slate_url)
             self._catalogue_at = now
 
     def _unknown(self, channel: SlatedChannel) -> bool:

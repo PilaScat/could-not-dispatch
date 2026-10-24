@@ -229,9 +229,23 @@ def test_a_listener_after_an_idle_stop_is_not_handed_the_previous_run():
 
 
 class _Served:
-    def __init__(self, broadcaster: Broadcaster, chunk_timeout: float = 1.0) -> None:
+    def __init__(
+        self,
+        broadcaster: Broadcaster,
+        chunk_timeout: float = 1.0,
+        crowded_broadcaster: Broadcaster | None = None,
+        crowded=None,
+    ) -> None:
         self.broadcaster = broadcaster
-        self.server = SlateServer(("127.0.0.1", 0), broadcaster, "/slate.ts", chunk_timeout)
+        self.crowded_broadcaster = crowded_broadcaster
+        self.server = SlateServer(
+            ("127.0.0.1", 0),
+            broadcaster,
+            "/slate.ts",
+            chunk_timeout,
+            crowded_broadcaster=crowded_broadcaster,
+            crowded=crowded,
+        )
         self.thread = threading.Thread(
             target=self.server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True
         )
@@ -246,6 +260,8 @@ class _Served:
         self.server.shutdown()
         self.thread.join(timeout=5)
         self.broadcaster.close()
+        if self.crowded_broadcaster is not None:
+            self.crowded_broadcaster.close()
         self.server.server_close()
 
 
@@ -253,8 +269,8 @@ class _Served:
 def served():
     made: list[_Served] = []
 
-    def build(broadcaster: Broadcaster, chunk_timeout: float = 1.0) -> _Served:
-        made.append(_Served(broadcaster, chunk_timeout))
+    def build(broadcaster: Broadcaster, chunk_timeout: float = 1.0, **cards) -> _Served:
+        made.append(_Served(broadcaster, chunk_timeout, **cards))
         return made[-1]
 
     yield build
@@ -315,3 +331,32 @@ def test_the_listener_is_released_when_the_client_disconnects(served):
     assert response.read(4) == b"tsda"
     response.close()
     assert _wait_until(lambda: broadcaster.subscriber_count() == 0)
+
+
+def _feeding(payload: bytes) -> Broadcaster:
+    encoder = FakeProcess()
+    threading.Thread(
+        target=lambda: [encoder.feed(payload) or time.sleep(0.01) for _ in range(50)],
+        daemon=True,
+    ).start()
+    return Broadcaster(["ffmpeg"], spawn=lambda: encoder, chunk_size=4)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("?channel=uuid-full", b"full"), ("?channel=uuid-other", b"card"), ("", b"card")],
+)
+def test_a_channel_that_found_the_provider_full_gets_the_card_for_it(served, query, expected):
+    running = served(
+        _feeding(b"card"),
+        crowded_broadcaster=_feeding(b"full"),
+        crowded=lambda uuid: uuid == "uuid-full",
+    )
+    with urllib.request.urlopen(f"{running.base}/slate.ts{query}", timeout=5) as response:
+        assert response.read(4) == expected
+
+
+def test_without_a_card_for_a_full_provider_every_channel_gets_the_one_card(served):
+    running = served(_feeding(b"card"), crowded=lambda uuid: True)
+    with urllib.request.urlopen(f"{running.base}/slate.ts?channel=uuid-full", timeout=5) as r:
+        assert r.read(4) == b"card"
