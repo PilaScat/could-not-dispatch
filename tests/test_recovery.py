@@ -382,11 +382,11 @@ def test_status_reports_fallback_channels_and_counts_the_rest_per_profile(routed
 def test_the_catalogue_follows_pages_and_skips_inactive_accounts_and_profiles(routed):
     routed(
         {
-            "/api/channels/channels/?page_size=500": {
+            "/api/channels/channels/?page_size=500&visibility_filter=all": {
                 "results": [{"uuid": WEB3, "streams": [2262, 2263, 22924]}],
-                "next": "http://dispatcharr/api/channels/channels/?page=2&page_size=500",
+                "next": "http://dispatcharr/api/channels/channels/?page=2&page_size=500&visibility_filter=all",
             },
-            "/api/channels/channels/?page=2&page_size=500": {
+            "/api/channels/channels/?page=2&page_size=500&visibility_filter=all": {
                 "results": [{"uuid": "", "streams": [1]},
                             {"uuid": "uuid-vetrina", "streams": [22929, 22930]}],
                 "next": None,

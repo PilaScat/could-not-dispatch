@@ -125,7 +125,7 @@ class Dispatcharr:
 
     def catalogue(self, url: str) -> Catalogue:
         chains: dict[str, list[int]] = {}
-        for row in self._collect("/api/channels/channels/?page_size=500"):
+        for row in self._collect("/api/channels/channels/?page_size=500&visibility_filter=all"):
             uuid = str(row.get("uuid") or "")
             if uuid:
                 streams = (_as_int(value) for value in row.get("streams") or [])

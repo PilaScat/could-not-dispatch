@@ -12,6 +12,9 @@
   link and a passing outage look the same
   ([#1](https://github.com/PilaScat/could-not-dispatch/issues/1), from
   [@ckegels](https://github.com/ckegels)).
+- A channel hidden from the output now goes back to its first stream like any other. The
+  Dispatcharr channel list leaves hidden channels out unless asked, so such a channel stayed on
+  the card until someone tuned away.
 
 ## 0.5.1 — 2026-10-24
 
