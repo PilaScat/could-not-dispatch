@@ -64,6 +64,9 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   (or whatever `media_source` points to) and `.runtime/` out first and back after. The new code
   only runs after `POST /api/plugins/plugins/reload/`, and the reload stops every plugin's
   processes, so press Apply afterwards.
+- `/api/channels/channels/` leaves out channels hidden from the output unless asked with
+  `visibility_filter=all`: up to 0.5.1 such a channel never went back to the provider, and the
+  first bench of 0.6.0, on hidden channels, gave them the usual card.
 - Dispatcharr fetches the card through the channel's stream profile, like any source: a profile
   that cannot start (a wrapper script saved with CRLF endings, or one that never exits on a
   refused source) keeps the channel off the card too.
@@ -75,11 +78,14 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 Redo this after any change to the way a channel goes back to the provider. It uses no provider
 connection: an `STD` M3U account uploaded from a file (`POST /api/m3u/accounts/` with the file,
 `max_streams` 1, then enable its group and refresh), whose streams point at the card with a
-different query (`http://127.0.0.1:9721/slate.ts?bench=a`; the server looks only at the path).
+different query (`http://127.0.0.1:9721/slate.ts?bench=a`: no `channel`, so the usual card).
 Three channels `[test stream, card]`: A takes the slot, B and C fall on the card, A leaves.
-After 120 s `/proxy/ts/status` must show one channel on that profile, and the second return is
-refused with `No profiles available with connection capacity`; with the shared card of 0.2.1
-there were two. Afterwards delete the channels, the account, its group, and the uploaded file in
+With a card set for a full provider, B and C get that one: a second ffmpeg on that file starts
+when B connects.
+After 120 s `/proxy/ts/status` must show one channel on that profile, and the other still on
+the card; with the shared card of 0.2.1 there were two. Since 0.4.0 the other one does not
+even try while the provider is full, so there is no `No profiles available with connection
+capacity` in the log (25 October 2026: B back 5 s after A left, C on the card). Afterwards delete the channels, the account, its group, and the uploaded file in
 `/data/uploads/m3us/`, which deleting the account leaves behind.
 
 ## Release
