@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 — 2026-10-24
+## 0.6.0 — 2026-10-25
 
 - **A second card for a channel that reached the fallback because the provider was full.**
   With **Image or video when the provider is full** set and an API key, a channel whose every
