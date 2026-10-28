@@ -30,7 +30,14 @@
       "label": "Show the channels in use",
       "type": "boolean",
       "default": false,
-      "help_text": "Writes on the card for a full provider the channels that hold its connections, one per line, with the programme on now when the guide has one. Leave the picture empty from 58% of its height down."
+      "help_text": "Writes on the card for a full provider the channels that hold its connections, one per line, with the programme on now when the guide has one. Leave the picture empty where the lines go, set just below."
+    },
+    {
+      "id": "in_use_top",
+      "label": "Height of the channels in use (%)",
+      "type": "number",
+      "default": 58.5,
+      "help_text": "Where the first line starts, as a share of the picture's height from the top, between 0 and 95. 58.5 puts it at 632 px on a 1080p card."
     },
     {
       "id": "in_use_font",

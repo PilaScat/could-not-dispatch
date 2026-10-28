@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
 import threading
 import time
@@ -21,6 +22,8 @@ try:
         HEALTH_PATH,
         IN_USE_FILE_NAME,
         IN_USE_FONT_SUFFIXES,
+        IN_USE_TOP_PERCENT,
+        IN_USE_TOP_RANGE,
         LISTEN_HOST,
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
@@ -42,6 +45,8 @@ except ImportError:
         HEALTH_PATH,
         IN_USE_FILE_NAME,
         IN_USE_FONT_SUFFIXES,
+        IN_USE_TOP_PERCENT,
+        IN_USE_TOP_RANGE,
         LISTEN_HOST,
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
@@ -94,6 +99,17 @@ def _as_int(value: object, fallback: int) -> int:
         return int(float(str(value)))
     except (TypeError, ValueError):
         return fallback
+
+
+def _as_percent(value: object, fallback: float) -> float:
+    try:
+        percent = float(str(value))
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(percent):
+        return fallback
+    lowest, highest = IN_USE_TOP_RANGE
+    return max(lowest, min(percent, highest))
 
 
 def _api_key(settings: dict) -> str:
@@ -411,6 +427,7 @@ class Plugin:
                 arguments += ["--in-use-file", str(caption.text_file)]
                 if caption.font is not None:
                     arguments += ["--in-use-font", str(caption.font)]
+                arguments += ["--in-use-top", str(caption.top_percent)]
 
         pid = process.spawn(
             BASE_DIR,
@@ -482,6 +499,7 @@ class Plugin:
                 "full_has_audio": full.has_audio if full else False,
                 "in_use": caption is not None,
                 "in_use_font": str(caption.font) if caption and caption.font else "",
+                "in_use_top": caption.top_percent if caption else None,
                 "media": str(media.path),
                 "kind": media.kind,
                 "has_audio": media.has_audio,
@@ -511,7 +529,11 @@ class Plugin:
             font = media_module.validate_local_path(source)
             if font.suffix.lower() not in IN_USE_FONT_SUFFIXES:
                 raise media_module.MediaError(f"'{source}' is not a .ttf, .otf or .ttc font.")
-        return Caption(text_file=RUNTIME_DIR / IN_USE_FILE_NAME, font=font)
+        return Caption(
+            text_file=RUNTIME_DIR / IN_USE_FILE_NAME,
+            font=font,
+            top_percent=_as_percent(settings.get("in_use_top"), IN_USE_TOP_PERCENT),
+        )
 
     def _stream_url(self, port: int) -> str:
         return slate_url(LISTEN_HOST, port, STREAM_PATH)

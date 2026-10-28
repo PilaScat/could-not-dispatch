@@ -20,7 +20,7 @@ from .constants import (
     IN_USE_FONT_SIZE,
     IN_USE_LINE_SPACING,
     IN_USE_REFERENCE_HEIGHT,
-    IN_USE_TOP,
+    IN_USE_TOP_PERCENT,
     INITIAL_BURST_KBIT,
     INITIAL_BURST_LOOKAHEAD_FRAMES,
     INITIAL_BURST_MAX_SECONDS,
@@ -111,6 +111,7 @@ def _as_int(value: object, fallback: int) -> int:
 class Caption:
     text_file: Path
     font: Path | None = None
+    top_percent: float = IN_USE_TOP_PERCENT
 
 
 def scale_filter(options: EncodeOptions) -> str:
@@ -140,7 +141,7 @@ def caption_filter(caption: Caption, options: EncodeOptions) -> str:
         f"drawtext=textfile={filter_value(str(caption.text_file))}:reload=1:expansion=none"
         f":{font}:fontsize={_scaled(IN_USE_FONT_SIZE, options)}:fontcolor={IN_USE_COLOUR}"
         f":line_spacing={_scaled(IN_USE_LINE_SPACING, options)}:text_align=C"
-        f":x=(w-text_w)/2:y={_scaled(IN_USE_TOP, options)}"
+        f":x=(w-text_w)/2:y={round(options.height * caption.top_percent / 100)}"
     )
 
 

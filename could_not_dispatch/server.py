@@ -28,6 +28,7 @@ from .constants import (
     ENCODER_RESTART_BACKOFF_SECONDS,
     HEALTH_PATH,
     IDLE_SHUTDOWN_SECONDS,
+    IN_USE_TOP_PERCENT,
     KIND_IMAGE,
     KIND_VIDEO,
     LISTEN_HOST,
@@ -381,6 +382,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--full-has-audio", action="store_true")
     parser.add_argument("--in-use-file")
     parser.add_argument("--in-use-font")
+    parser.add_argument("--in-use-top", type=float, default=IN_USE_TOP_PERCENT)
     parser.add_argument("--host", default=LISTEN_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--path", default=STREAM_PATH)
@@ -418,7 +420,7 @@ def _caption(args: argparse.Namespace, api_key: str) -> Caption | None:
         _log("this ffmpeg cannot write text from a file, so the channels in use are not shown")
         return None
     font = Path(args.in_use_font) if args.in_use_font else None
-    return Caption(text_file=Path(args.in_use_file), font=font)
+    return Caption(text_file=Path(args.in_use_file), font=font, top_percent=args.in_use_top)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

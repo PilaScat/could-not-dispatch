@@ -233,6 +233,7 @@ def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
         "api_key",
         "show_in_use",
         "in_use_font",
+        "in_use_top",
     }
     assert used <= declared
 
@@ -339,4 +340,36 @@ def test_setting_a_card_for_a_full_provider_restarts_the_fallback(loaded_module)
     options = loaded_module.EncodeOptions.normalized()
     assert plugin._signature(card, options, 9721, True) != plugin._signature(
         card, options, 9721, True, full
+    )
+
+
+def test_the_height_of_the_channels_in_use_defaults_to_the_operator_card(manifest):
+    field = next(field for field in manifest["fields"] if field["id"] == "in_use_top")
+    assert field["type"] == "number"
+    assert field["default"] == 58.5
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [(None, 58.5), ("", 58.5), ("40", 40.0), (12.5, 12.5), (-3, 0.0), (120, 95.0), ("nan", 58.5)],
+)
+def test_the_height_of_the_channels_in_use_is_read_within_its_range(
+    loaded_module, isolated_runtime, given, expected
+):
+    caption = loaded_module.Plugin()._caption({"show_in_use": True, "in_use_top": given})
+    assert caption.top_percent == expected
+
+
+def test_the_height_of_the_channels_in_use_reaches_the_server_and_restarts_it(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    plugin = loaded_module.Plugin()
+    caption = plugin._caption({"show_in_use": True, "in_use_top": 40})
+    full = loaded_module.media_module.Media(Path("/data/full.png"), "image", has_audio=False)
+    arguments = _started_arguments(loaded_module, monkeypatch, full, caption)
+    assert arguments[arguments.index("--in-use-top") + 1] == "40.0"
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    options = loaded_module.EncodeOptions.normalized()
+    assert plugin._signature(card, options, 9721, True, full, caption) != plugin._signature(
+        card, options, 9721, True, full, plugin._caption({"show_in_use": True})
     )

@@ -429,3 +429,11 @@ def test_the_card_for_a_full_provider_is_written_in_the_log_with_the_channel_nam
         server.server_close()
         plain.close()
         full.close()
+
+
+def test_the_height_of_the_channels_in_use_reaches_the_caption(monkeypatch):
+    monkeypatch.setattr(server_module, "ffmpeg_supports_caption", lambda: True)
+    given = _arguments(*FULL_CARD, "--in-use-file", "/tmp/in-use.txt", "--in-use-top", "40")
+    assert server_module._caption(given, "key").top_percent == 40.0
+    default = _arguments(*FULL_CARD, "--in-use-file", "/tmp/in-use.txt")
+    assert server_module._caption(default, "key").top_percent == 58.5

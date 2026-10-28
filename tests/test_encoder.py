@@ -310,3 +310,10 @@ def test_an_ffmpeg_without_centred_lines_cannot_draw_the_caption(monkeypatch):
         lambda command, **kwargs: _FakeCompletedProcess("textfile reload expansion"),
     )
     assert ffmpeg_supports_caption("ffmpeg-6-build") is False
+
+
+def test_the_caption_starts_at_the_height_given_as_a_share_of_the_card():
+    caption = Caption(text_file=Path("/tmp/in-use.txt"), top_percent=40.0)
+    full_hd = build_command(CARD, _options(width=1920, height=1080), caption=caption)
+    half = build_command(CARD, _options(width=960, height=540), caption=caption)
+    assert (_drawtext(full_hd)["y"], _drawtext(half)["y"]) == ("432", "216")
