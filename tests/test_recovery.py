@@ -463,6 +463,20 @@ def test_a_channel_that_fills_the_account_itself_while_trying_its_sources_is_not
     assert recovery.crowded(CALCIO, 5)
 
 
+def test_a_channel_that_filled_the_account_itself_waits_like_a_failure_on_the_card():
+    recovery, api, lines = build()
+    api.busy = 2
+    api.on_provider = [WEB3]
+    recovery.tick(0)
+    api.on_provider = []
+    api.put_on_slate(WEB3)
+    run(recovery, 2, 22)
+    assert api.changes == []
+    assert not any("while the provider is full" in line for line in lines)
+    recovery.tick(32)
+    assert api.changes == [(WEB3, 2262)]
+
+
 def test_a_full_account_seen_without_the_channel_counts_for_twenty_seconds():
     recovery, api, _ = build()
     api.busy = 3

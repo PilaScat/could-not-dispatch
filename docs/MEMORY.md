@@ -38,7 +38,10 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   back on the card within 30 s of a `change_stream` (`Episode.sent_at`, either kind) has failed
   its sources and gets the usual card even if others filled the provider meanwhile. The first
   arrival of an offline channel on a provider full of others still gets the full card: its
-  sources were never tried. `in_use` and the crowded episodes still count every channel.
+  sources were never tried. The same holds for the return: a channel that filled the account
+  itself is not taken for one waiting for a connection, so it waits 30 s instead of being sent
+  back to its dead sources the moment it leaves them (bench of 28 October: 0 s before). `in_use`
+  still counts every channel holding a connection.
 - **The channels in use are written by `drawtext` from a file** (0.7.0, off by default,
   asked by the operator on 28 October 2026). The recovery loop already reads
   `/proxy/ts/status` every 2-10 s, so after each check it writes the channels on the

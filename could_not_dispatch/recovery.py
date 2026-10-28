@@ -408,7 +408,7 @@ class Recovery:
         episode = self._episodes.get(channel.uuid)
         if episode is None or now - episode.seen_at > 2 * self._poll_seconds:
             tries = episode.tries if episode is not None else 0
-            crowded = account is not None and self._was_full(account, now)
+            crowded = account is not None and self._was_full(account, now, without=channel.uuid)
             if episode is not None and self._bounced(episode, now):
                 crowded = False
                 tries += 1
