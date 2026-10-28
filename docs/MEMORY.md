@@ -30,6 +30,19 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   broken link and a passing outage cannot be told apart: Dispatcharr does not tell a plugin
   why each stream failed. A provider that fills up less than one poll (10 s) before the
   failover is not seen yet, and the channel gets the usual card.
+- **The channels in use are written by `drawtext` from a file** (0.7.0, off by default,
+  asked by the operator on 28 October 2026). The recovery loop already reads
+  `/proxy/ts/status` every 2-10 s, so after each check it writes the channels on the
+  profiles of accounts full in the last 20 s to `.runtime/in-use.txt`, through a `.part` and
+  `os.replace`, as `drawtext` with `reload=1` needs; the encoder never restarts. The file
+  carries only names, no heading: the picture says what the list is, in its own language.
+  Names come from the catalogue's `effective_name`, never from `channel_name` of the status,
+  which is at times the stream's name. The programme comes from
+  `POST /api/epg/current-programs/`, asked only while an account is full, only for channels
+  without a programme still on, with a 2 s timeout and a minute before trying again after an
+  error, so a slow guide costs at most 2 s once a minute. A failure inside the caption is
+  logged once and never leaves `tick`. Position, size and colour are fixed: they were set on
+  the operator's 1080p card and are scaled to the encoder's height.
 - **A late listener starts on a video picture.** The head start begins at the last PAT before
   a packet that both carries the random-access flag and opens a video PES. ffmpeg's muxer sets
   the flag on every AAC packet too, and up to 0.4.0 an audio packet could open the head start:
@@ -67,6 +80,11 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 - `/api/channels/channels/` leaves out channels hidden from the output unless asked with
   `visibility_filter=all`: up to 0.5.1 such a channel never went back to the provider, and the
   first bench of 0.6.0, on hidden channels, gave them the usual card.
+- On an auto-created channel `name` is the provider's raw name (`DAZN WEB 4 FULL HD`); the
+  name the operator gave it is in `override.name`, and `effective_name` resolves both.
+  `/api/channels/channels/` ignores a `uuid` filter and returns the whole list.
+- `/api/epg/current-programs/` asked by `channel_uuids` reads only the database: a channel
+  whose guide is still being parsed, or comes from a dummy source, is simply missing.
 - Dispatcharr fetches the card through the channel's stream profile, like any source: a profile
   that cannot start (a wrapper script saved with CRLF endings, or one that never exits on a
   refused source) keeps the channel off the card too.
