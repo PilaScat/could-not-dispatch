@@ -30,6 +30,15 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   broken link and a passing outage cannot be told apart: Dispatcharr does not tell a plugin
   why each stream failed. A provider that fills up less than one poll (10 s) before the
   failover is not seen yet, and the channel gets the usual card.
+- **A full account is judged without the channel asking for the card** (0.7.1). Each
+  observation of a full account keeps the channels holding it, and `crowded(uuid)` leaves the
+  asker out. On 28 October 2026 an offline channel sent back as a connection freed up held the
+  third connection while it walked its four dead sources, the check saw the account full, and
+  15 s later it fell back onto the card for a full provider with a connection free. A channel
+  back on the card within 30 s of a `change_stream` (`Episode.sent_at`, either kind) has failed
+  its sources and gets the usual card even if others filled the provider meanwhile. The first
+  arrival of an offline channel on a provider full of others still gets the full card: its
+  sources were never tried. `in_use` and the crowded episodes still count every channel.
 - **The channels in use are written by `drawtext` from a file** (0.7.0, off by default,
   asked by the operator on 28 October 2026). The recovery loop already reads
   `/proxy/ts/status` every 2-10 s, so after each check it writes the channels on the
@@ -41,8 +50,9 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   `POST /api/epg/current-programs/`, asked only while an account is full, only for channels
   without a programme still on, with a 2 s timeout and a minute before trying again after an
   error, so a slow guide costs at most 2 s once a minute. A failure inside the caption is
-  logged once and never leaves `tick`. Position, size and colour are fixed: they were set on
-  the operator's 1080p card and are scaled to the encoder's height.
+  logged once and never leaves `tick`. Size, spacing and colour are fixed, set on the
+  operator's 1080p card and scaled to the encoder's height; the height of the first line is a
+  setting since 0.7.1, 58.5% by default.
 - **A late listener starts on a video picture.** The head start begins at the last PAT before
   a packet that both carries the random-access flag and opens a video PES. ffmpeg's muxer sets
   the flag on every AAC packet too, and up to 0.4.0 an audio packet could open the head start:
