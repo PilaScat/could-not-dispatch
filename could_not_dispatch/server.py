@@ -15,6 +15,7 @@ from pathlib import Path
 from types import FrameType
 from urllib.parse import parse_qs, urlparse
 
+from .caption import InUseCaption, InUseFile
 from .constants import (
     API_KEY_ENV,
     CHUNK_SIZE,
@@ -36,7 +37,13 @@ from .constants import (
     STREAM_PATH,
     SUBSCRIBER_QUEUE_CHUNKS,
 )
-from .encoder import EncodeOptions, build_command, ffmpeg_supports_readrate
+from .encoder import (
+    Caption,
+    EncodeOptions,
+    build_command,
+    ffmpeg_supports_caption,
+    ffmpeg_supports_readrate,
+)
 from .media import Media
 from .recovery import CHANNEL_PARAMETER, Dispatcharr, Recovery
 from .transport import head_start
@@ -369,6 +376,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--full-media")
     parser.add_argument("--full-kind", choices=[KIND_IMAGE, KIND_VIDEO])
     parser.add_argument("--full-has-audio", action="store_true")
+    parser.add_argument("--in-use-file")
+    parser.add_argument("--in-use-font")
     parser.add_argument("--host", default=LISTEN_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--path", default=STREAM_PATH)
@@ -383,29 +392,53 @@ def slate_url(host: str, port: int, path: str) -> str:
     return f"http://{host}:{port}{path}"
 
 
-def build_recovery(url: str, api_key: str, *broadcasters: Broadcaster) -> Recovery | None:
+def build_recovery(
+    url: str, api_key: str, *broadcasters: Broadcaster, in_use_file: Path | None = None
+) -> Recovery | None:
     if not api_key:
         return None
 
     def watching() -> int:
         return sum(broadcaster.subscriber_count() for broadcaster in broadcasters)
 
-    return Recovery(Dispatcharr(DISPATCHARR_URL, api_key), url, watching, _log)
+    api = Dispatcharr(DISPATCHARR_URL, api_key)
+    on_in_use = None
+    if in_use_file is not None:
+        on_in_use = InUseCaption(InUseFile(in_use_file), api.current_programs, _log).update
+    return Recovery(api, url, watching, _log, on_in_use=on_in_use)
+
+
+def _caption(args: argparse.Namespace, api_key: str) -> Caption | None:
+    if not (args.in_use_file and args.full_media and api_key):
+        return None
+    if not ffmpeg_supports_caption():
+        _log("this ffmpeg cannot write text from a file, so the channels in use are not shown")
+        return None
+    font = Path(args.in_use_font) if args.in_use_font else None
+    return Caption(text_file=Path(args.in_use_file), font=font)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    api_key = os.environ.get(API_KEY_ENV, "")
     media = Media(path=Path(args.media), kind=args.kind, has_audio=args.has_audio)
     options = EncodeOptions.normalized(args.width, args.height, args.fps, args.video_kbps)
     readrate = ffmpeg_supports_readrate()
     broadcaster = Broadcaster(build_command(media, options, supports_readrate=readrate))
     crowded_broadcaster = None
+    caption = None
     if args.full_media and args.full_kind:
         full = Media(path=Path(args.full_media), kind=args.full_kind, has_audio=args.full_has_audio)
-        crowded_broadcaster = Broadcaster(build_command(full, options, supports_readrate=readrate))
+        caption = _caption(args, api_key)
+        crowded_broadcaster = Broadcaster(
+            build_command(full, options, supports_readrate=readrate, caption=caption)
+        )
     cards = [broadcaster] if crowded_broadcaster is None else [broadcaster, crowded_broadcaster]
     recovery = build_recovery(
-        slate_url(args.host, args.port, args.path), os.environ.get(API_KEY_ENV, ""), *cards
+        slate_url(args.host, args.port, args.path),
+        api_key,
+        *cards,
+        in_use_file=caption.text_file if caption is not None else None,
     )
     server = SlateServer(
         (args.host, args.port),
@@ -426,6 +459,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     _log(f"serving {args.path} on {args.host}:{args.port} from {args.media}")
     if crowded_broadcaster is not None:
         _log(f"channels that reach it with the provider full get {args.full_media}")
+    if caption is not None:
+        _log(f"the channels in use are written on it from {caption.text_file}")
     if recovery is not None:
         recovery.start()
         _log(

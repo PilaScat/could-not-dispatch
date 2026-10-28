@@ -9,7 +9,15 @@ import urllib.request
 import pytest
 from conftest import FakeProcess
 
-from could_not_dispatch.server import Broadcaster, SlateServer, Subscriber
+from could_not_dispatch import server as server_module
+from could_not_dispatch.constants import IN_USE_EMPTY_TEXT
+from could_not_dispatch.server import (
+    Broadcaster,
+    SlateServer,
+    Subscriber,
+    build_recovery,
+    parse_args,
+)
 
 
 def _wait_until(predicate, timeout=5.0, interval=0.01):
@@ -360,3 +368,42 @@ def test_without_a_card_for_a_full_provider_every_channel_gets_the_one_card(serv
     running = served(_feeding(b"card"), crowded=lambda uuid: True)
     with urllib.request.urlopen(f"{running.base}/slate.ts?channel=uuid-full", timeout=5) as r:
         assert r.read(4) == b"card"
+
+
+def _arguments(*extra: str):
+    return parse_args(["--media", "/data/card.png", "--kind", "image", *extra])
+
+
+FULL_CARD = ("--full-media", "/data/full.png", "--full-kind", "image")
+
+
+def test_the_channels_in_use_are_drawn_only_with_a_card_for_a_full_provider_and_a_key(
+    monkeypatch,
+):
+    monkeypatch.setattr(server_module, "ffmpeg_supports_caption", lambda: True)
+    asked = _arguments(*FULL_CARD, "--in-use-file", "/tmp/in-use.txt")
+    assert server_module._caption(asked, "key").text_file.name == "in-use.txt"
+    assert server_module._caption(asked, "") is None
+    assert server_module._caption(_arguments("--in-use-file", "/tmp/in-use.txt"), "key") is None
+    assert server_module._caption(_arguments(*FULL_CARD), "key") is None
+
+
+def test_an_ffmpeg_that_cannot_draw_the_caption_leaves_the_card_as_it_is(monkeypatch):
+    lines: list[str] = []
+    monkeypatch.setattr(server_module, "ffmpeg_supports_caption", lambda: False)
+    monkeypatch.setattr(server_module, "_log", lines.append)
+    asked = _arguments(*FULL_CARD, "--in-use-file", "/tmp/in-use.txt", "--in-use-font", "/f.ttf")
+    assert server_module._caption(asked, "key") is None
+    assert len(lines) == 1
+
+
+def test_the_text_file_is_ready_before_the_card_starts(tmp_path):
+    path = tmp_path / "in-use.txt"
+    broadcaster = Broadcaster(["ffmpeg"])
+    try:
+        recovery = build_recovery("http://127.0.0.1:9721/slate.ts", "key", broadcaster,
+                                  in_use_file=path)
+        assert recovery is not None
+        assert path.read_text(encoding="utf-8") == IN_USE_EMPTY_TEXT
+    finally:
+        broadcaster.close()

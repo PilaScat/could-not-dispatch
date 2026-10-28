@@ -231,11 +231,19 @@ def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
         "exclude_channels",
         "auto_reapply",
         "api_key",
+        "show_in_use",
+        "in_use_font",
     }
     assert used <= declared
 
 
-def _started_arguments(loaded_module, monkeypatch, full) -> list[str]:
+def test_the_channels_in_use_are_off_by_default(manifest):
+    field = next(field for field in manifest["fields"] if field["id"] == "show_in_use")
+    assert field["type"] == "boolean"
+    assert field["default"] is False
+
+
+def _started_arguments(loaded_module, monkeypatch, full, caption=None) -> list[str]:
     spawned: list[list[str]] = []
 
     def spawn(_base, arguments, *_args, **_kwargs):
@@ -247,7 +255,7 @@ def _started_arguments(loaded_module, monkeypatch, full) -> list[str]:
     monkeypatch.setattr(loaded_module.Plugin, "_wait_for_port", lambda self, port: True)
     card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
     options = loaded_module.EncodeOptions.normalized()
-    loaded_module.Plugin()._start_process(card, options, 9721, "key", full)
+    loaded_module.Plugin()._start_process(card, options, 9721, "key", full, caption)
     return spawned[0]
 
 
@@ -266,6 +274,62 @@ def test_without_a_card_for_a_full_provider_the_server_gets_none(
 ):
     arguments = _started_arguments(loaded_module, monkeypatch, None)
     assert "--full-media" not in arguments
+
+
+def test_with_the_channels_in_use_off_the_server_writes_none(loaded_module, isolated_runtime):
+    assert loaded_module.Plugin()._caption({}) is None
+    assert loaded_module.Plugin()._caption({"show_in_use": False}) is None
+
+
+def test_the_channels_in_use_reach_the_server_with_the_card_for_a_full_provider(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    caption = loaded_module.Plugin()._caption({"show_in_use": True})
+    assert caption.text_file == isolated_runtime / "in-use.txt"
+    assert caption.font is None
+    full = loaded_module.media_module.Media(Path("/data/full.png"), "image", has_audio=False)
+    arguments = _started_arguments(loaded_module, monkeypatch, full, caption)
+    assert arguments[arguments.index("--in-use-file") + 1] == str(caption.text_file)
+    assert "--in-use-font" not in arguments
+
+
+def test_without_a_card_for_a_full_provider_the_channels_in_use_go_nowhere(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    caption = loaded_module.Plugin()._caption({"show_in_use": True})
+    arguments = _started_arguments(loaded_module, monkeypatch, None, caption)
+    assert "--in-use-file" not in arguments
+
+
+def test_a_font_for_the_channels_in_use_is_checked_like_the_card(
+    loaded_module, isolated_runtime, monkeypatch, tmp_path
+):
+    font, picture = tmp_path / "sky.ttf", tmp_path / "card.png"
+    font.write_bytes(b"font")
+    picture.write_bytes(b"png")
+    real = loaded_module.media_module.validate_local_path
+    monkeypatch.setattr(
+        loaded_module.media_module,
+        "validate_local_path",
+        lambda source: real(source, allowed_roots=[tmp_path]),
+    )
+    plugin = loaded_module.Plugin()
+    caption = plugin._caption({"show_in_use": True, "in_use_font": str(font)})
+    assert caption.font == font.resolve()
+    with pytest.raises(loaded_module.media_module.MediaError, match="font"):
+        plugin._caption({"show_in_use": True, "in_use_font": str(picture)})
+    with pytest.raises(loaded_module.media_module.MediaError, match="outside"):
+        plugin._caption({"show_in_use": True, "in_use_font": str(tmp_path.parent / "x.ttf")})
+
+
+def test_switching_the_channels_in_use_restarts_the_fallback(loaded_module, isolated_runtime):
+    plugin = loaded_module.Plugin()
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    options = loaded_module.EncodeOptions.normalized()
+    caption = plugin._caption({"show_in_use": True})
+    assert plugin._signature(card, options, 9721, True, card) != plugin._signature(
+        card, options, 9721, True, card, caption
+    )
 
 
 def test_setting_a_card_for_a_full_provider_restarts_the_fallback(loaded_module):

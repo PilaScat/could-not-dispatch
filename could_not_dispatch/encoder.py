@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from .constants import (
     AUDIO_SAMPLE_RATE,
@@ -13,6 +14,13 @@ from .constants import (
     DEFAULT_HEIGHT,
     DEFAULT_VIDEO_KBPS,
     DEFAULT_WIDTH,
+    DRAWTEXT_OPTIONS,
+    IN_USE_COLOUR,
+    IN_USE_FONT_FAMILY,
+    IN_USE_FONT_SIZE,
+    IN_USE_LINE_SPACING,
+    IN_USE_REFERENCE_HEIGHT,
+    IN_USE_TOP,
     INITIAL_BURST_KBIT,
     INITIAL_BURST_LOOKAHEAD_FRAMES,
     INITIAL_BURST_MAX_SECONDS,
@@ -99,6 +107,12 @@ def _as_int(value: object, fallback: int) -> int:
         return fallback
 
 
+@dataclass(frozen=True)
+class Caption:
+    text_file: Path
+    font: Path | None = None
+
+
 def scale_filter(options: EncodeOptions) -> str:
     return (
         f"scale={options.width}:{options.height}:force_original_aspect_ratio=decrease,"
@@ -107,18 +121,51 @@ def scale_filter(options: EncodeOptions) -> str:
     )
 
 
-@functools.cache
-def ffmpeg_supports_readrate(executable: str = "ffmpeg") -> bool:
+def filter_value(value: str) -> str:
+    option = "".join(f"\\{char}" if char in "\\':" else char for char in value)
+    return "".join(f"\\{char}" if char in "\\'[],;" else char for char in option)
+
+
+def _scaled(value: int, options: EncodeOptions) -> int:
+    return max(1, round(value * options.height / IN_USE_REFERENCE_HEIGHT))
+
+
+def caption_filter(caption: Caption, options: EncodeOptions) -> str:
+    font = (
+        f"fontfile={filter_value(str(caption.font))}"
+        if caption.font is not None
+        else f"font={IN_USE_FONT_FAMILY}"
+    )
+    return (
+        f"drawtext=textfile={filter_value(str(caption.text_file))}:reload=1:expansion=none"
+        f":{font}:fontsize={_scaled(IN_USE_FONT_SIZE, options)}:fontcolor={IN_USE_COLOUR}"
+        f":line_spacing={_scaled(IN_USE_LINE_SPACING, options)}:text_align=C"
+        f":x=(w-text_w)/2:y={_scaled(IN_USE_TOP, options)}"
+    )
+
+
+def _ffmpeg_help(executable: str, *topic: str) -> str:
     try:
         probe = subprocess.run(
-            [executable, "-hide_banner", "-h", "full"],
+            [executable, "-hide_banner", "-h", *topic],
             capture_output=True,
             text=True,
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return "readrate_initial_burst" in probe.stdout
+        return ""
+    return probe.stdout
+
+
+@functools.cache
+def ffmpeg_supports_readrate(executable: str = "ffmpeg") -> bool:
+    return "readrate_initial_burst" in _ffmpeg_help(executable, "full")
+
+
+@functools.cache
+def ffmpeg_supports_caption(executable: str = "ffmpeg") -> bool:
+    described = _ffmpeg_help(executable, "filter=drawtext")
+    return all(option in described for option in DRAWTEXT_OPTIONS)
 
 
 def build_command(
@@ -126,6 +173,7 @@ def build_command(
     options: EncodeOptions,
     executable: str = "ffmpeg",
     supports_readrate: bool = True,
+    caption: Caption | None = None,
 ) -> list[str]:
     command = [executable, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if supports_readrate:
@@ -164,9 +212,12 @@ def build_command(
 
     command += ["-map", "0:v:0", "-map", audio_map]
     command += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+    video_filter = scale_filter(options)
+    if caption is not None:
+        video_filter = f"{video_filter},{caption_filter(caption, options)}"
     command += [
         "-vf",
-        scale_filter(options),
+        video_filter,
         "-r",
         str(options.fps),
         "-g",

@@ -19,6 +19,8 @@ try:
         API_KEY_ENV,
         DEFAULT_PORT,
         HEALTH_PATH,
+        IN_USE_FILE_NAME,
+        IN_USE_FONT_SUFFIXES,
         LISTEN_HOST,
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
@@ -27,7 +29,7 @@ try:
         STREAM_NAME,
         STREAM_PATH,
     )
-    from .could_not_dispatch.encoder import EncodeOptions
+    from .could_not_dispatch.encoder import Caption, EncodeOptions
     from .could_not_dispatch.server import slate_url
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,6 +40,8 @@ except ImportError:
         API_KEY_ENV,
         DEFAULT_PORT,
         HEALTH_PATH,
+        IN_USE_FILE_NAME,
+        IN_USE_FONT_SUFFIXES,
         LISTEN_HOST,
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
@@ -46,7 +50,7 @@ except ImportError:
         STREAM_NAME,
         STREAM_PATH,
     )
-    from could_not_dispatch.encoder import EncodeOptions
+    from could_not_dispatch.encoder import Caption, EncodeOptions
     from could_not_dispatch.server import slate_url
 
 logger = logging.getLogger(__name__)
@@ -159,12 +163,13 @@ class Plugin:
         resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
         media = media_module.inspect(resolved.path)
         full = self._full_media(settings)
+        caption = self._caption(settings)
         options = self._encode_options(settings, media)
 
         api_key = _api_key(settings)
-        signature = self._signature(media, options, port, bool(api_key), full)
+        signature = self._signature(media, options, port, bool(api_key), full, caption)
 
-        started = self._ensure_process(signature, media, options, port, api_key, full)
+        started = self._ensure_process(signature, media, options, port, api_key, full, caption)
 
         channel_ids = targeting.target_channel_ids(
             settings.get("exclude_groups"), settings.get("exclude_channels")
@@ -176,7 +181,15 @@ class Plugin:
         return {
             "status": "ok",
             "message": self._apply_message(
-                resolved, media, options, started, attachment, len(channel_ids), full, api_key
+                resolved,
+                media,
+                options,
+                started,
+                attachment,
+                len(channel_ids),
+                full,
+                api_key,
+                caption,
             ),
         }
 
@@ -190,6 +203,7 @@ class Plugin:
         covered: int,
         full: media_module.Media | None = None,
         api_key: str = "",
+        caption: Caption | None = None,
     ) -> str:
         parts = [
             f"Fallback {'started' if started else 'already running'} from the "
@@ -200,10 +214,12 @@ class Plugin:
         if full is not None:
             parts.append(
                 f"A channel that reaches it with the provider full gets the {full.kind} "
-                "set for that."
+                f"set for that{', with the channels in use written on it' if caption else ''}."
                 if api_key
                 else "The card for a full provider needs the API key, so it is not in use."
             )
+        elif caption is not None:
+            parts.append("The channels in use need a card for a full provider, so none is shown.")
         parts.append(self._coverage_message(attachment, covered))
         return " ".join(parts)
 
@@ -267,6 +283,7 @@ class Plugin:
             port,
             _api_key(settings),
             self._full_media(settings),
+            self._caption(settings),
         )
         return {"status": "ok", "message": "Fallback restarted."}
 
@@ -320,6 +337,7 @@ class Plugin:
         port: int,
         api_key: str,
         full: media_module.Media | None = None,
+        caption: Caption | None = None,
     ) -> bool:
         state = self._state()
         pid = state.get("pid")
@@ -328,7 +346,7 @@ class Plugin:
             if state.get("signature") == signature:
                 return False
             process.terminate(pid, token)
-        self._start_process(media, options, port, api_key, full)
+        self._start_process(media, options, port, api_key, full, caption)
         return True
 
     def _stop_fallback(self, settings: dict) -> bool:
@@ -346,6 +364,7 @@ class Plugin:
         port: int,
         api_key: str,
         full: media_module.Media | None = None,
+        caption: Caption | None = None,
     ) -> None:
         if not process.port_is_free(LISTEN_HOST, port):
             reclaimed = process.terminate_strays(port)
@@ -388,6 +407,10 @@ class Plugin:
             arguments += ["--full-media", str(full.path), "--full-kind", full.kind]
             if full.has_audio:
                 arguments.append("--full-has-audio")
+            if caption is not None:
+                arguments += ["--in-use-file", str(caption.text_file)]
+                if caption.font is not None:
+                    arguments += ["--in-use-font", str(caption.font)]
 
         pid = process.spawn(
             BASE_DIR,
@@ -450,12 +473,15 @@ class Plugin:
         port: int,
         recovery: bool,
         full: media_module.Media | None = None,
+        caption: Caption | None = None,
     ) -> str:
         return json.dumps(
             {
                 "full_media": str(full.path) if full else "",
                 "full_kind": full.kind if full else "",
                 "full_has_audio": full.has_audio if full else False,
+                "in_use": caption is not None,
+                "in_use_font": str(caption.font) if caption and caption.font else "",
                 "media": str(media.path),
                 "kind": media.kind,
                 "has_audio": media.has_audio,
@@ -475,6 +501,17 @@ class Plugin:
             return None
         resolved = media_module.resolve(source, MEDIA_CACHE_DIR)
         return media_module.inspect(resolved.path)
+
+    def _caption(self, settings: dict) -> Caption | None:
+        if not settings.get("show_in_use", False):
+            return None
+        source = str(settings.get("in_use_font") or "").strip()
+        font = None
+        if source:
+            font = media_module.validate_local_path(source)
+            if font.suffix.lower() not in IN_USE_FONT_SUFFIXES:
+                raise media_module.MediaError(f"'{source}' is not a .ttf, .otf or .ttc font.")
+        return Caption(text_file=RUNTIME_DIR / IN_USE_FILE_NAME, font=font)
 
     def _stream_url(self, port: int) -> str:
         return slate_url(LISTEN_HOST, port, STREAM_PATH)

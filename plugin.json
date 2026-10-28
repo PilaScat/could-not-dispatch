@@ -26,6 +26,21 @@
       "help_text": "Optional, given like the one above. Shown instead of it to a channel whose every source belongs to a provider account that was at its connection limit in the last 20 seconds, so the message can say that every connection is in use. Needs the API key. Empty: the same card for every channel."
     },
     {
+      "id": "show_in_use",
+      "label": "Show the channels in use",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Writes on the card for a full provider the channels that hold its connections, one per line, with the programme on now when the guide has one. Leave the picture empty from 58% of its height down."
+    },
+    {
+      "id": "in_use_font",
+      "label": "Font for the channels in use",
+      "type": "string",
+      "default": "",
+      "placeholder": "/data/fonts/channels.ttf",
+      "help_text": "Optional: a .ttf, .otf or .ttc file inside the Dispatcharr data volume. Empty: the sans-serif font of the container."
+    },
+    {
       "id": "port",
       "label": "Local port",
       "type": "number",

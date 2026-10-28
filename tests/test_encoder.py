@@ -5,9 +5,12 @@ from pathlib import Path
 
 from could_not_dispatch.constants import DEFAULT_FPS, KIND_IMAGE, KIND_VIDEO
 from could_not_dispatch.encoder import (
+    Caption,
     EncodeOptions,
     build_command,
+    ffmpeg_supports_caption,
     ffmpeg_supports_readrate,
+    filter_value,
     scale_filter,
 )
 from could_not_dispatch.media import Media
@@ -242,3 +245,68 @@ def test_ffmpeg_supports_readrate_is_false_rather_than_raising_when_ffmpeg_is_mi
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert ffmpeg_supports_readrate("ffmpeg-missing-build") is False
+
+
+def _video_filter(command: list[str]) -> str:
+    return command[command.index("-vf") + 1]
+
+
+def _drawtext(command: list[str]) -> dict[str, str]:
+    drawtext = _video_filter(command).split(",drawtext=", 1)[1]
+    return dict(option.split("=", 1) for option in drawtext.split(":"))
+
+
+CARD = Media(Path("/data/full.png"), KIND_IMAGE, has_audio=False)
+
+
+def test_without_a_caption_the_card_has_no_text_drawn_on_it():
+    assert "drawtext" not in _video_filter(build_command(CARD, _options()))
+
+
+def test_a_caption_is_drawn_from_a_file_that_is_read_again_on_every_frame():
+    caption = Caption(text_file=Path("/data/plugins/cnd/.runtime/in-use.txt"))
+    command = build_command(CARD, _options(width=1920, height=1080), caption=caption)
+    assert _video_filter(command).startswith(scale_filter(_options(width=1920, height=1080)))
+    options = _drawtext(command)
+    assert options["textfile"] == filter_value(str(caption.text_file))
+    assert options["reload"] == "1"
+    assert options["expansion"] == "none"
+    assert options["text_align"] == "C"
+    assert options["x"] == "(w-text_w)/2"
+    assert (options["fontsize"], options["y"], options["line_spacing"]) == ("50", "632", "12")
+    assert options["font"] == "Sans"
+
+
+def test_the_caption_scales_with_the_height_of_the_card():
+    caption = Caption(text_file=Path("/tmp/in-use.txt"))
+    options = _drawtext(build_command(CARD, _options(width=960, height=540), caption=caption))
+    assert (options["fontsize"], options["y"], options["line_spacing"]) == ("25", "316", "6")
+
+
+def test_a_caption_font_is_given_as_a_file():
+    caption = Caption(text_file=Path("/tmp/in-use.txt"), font=Path("/data/fonts/sky.ttf"))
+    options = _drawtext(build_command(CARD, _options(), caption=caption))
+    assert options["fontfile"] == filter_value(str(caption.font))
+    assert "font" not in options
+
+
+def test_a_path_with_filter_syntax_in_it_is_escaped_for_both_levels():
+    assert filter_value("/data/a:b'c,d") == "/data/a\\\\:b\\\\\\'c\\,d"
+    assert filter_value("/data/plain.txt") == "/data/plain.txt"
+
+
+def test_a_caption_needs_drawtext_with_a_reloaded_file_and_centred_lines(monkeypatch):
+    help_text = "textfile reload expansion text_align"
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **kwargs: _FakeCompletedProcess(help_text)
+    )
+    assert ffmpeg_supports_caption("ffmpeg-8-build") is True
+
+
+def test_an_ffmpeg_without_centred_lines_cannot_draw_the_caption(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: _FakeCompletedProcess("textfile reload expansion"),
+    )
+    assert ffmpeg_supports_caption("ffmpeg-6-build") is False
