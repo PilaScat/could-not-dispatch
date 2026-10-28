@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 — 2026-10-28
+
+- **The card for a full provider can say which channels hold the connections.** With
+  **Show the channels in use** on, off by default, that card gets one centred line for each
+  channel on an account that was full in the last 20 seconds: the channel's name and, when
+  Dispatcharr's guide has one, the programme on now, left out when it only repeats the name.
+  The lines start at 58.5% of the picture's height, so the picture should leave that part
+  empty. The list is rewritten after every check, 2 to 10 seconds, and the encoder reads it
+  on every frame without restarting. The guide is asked only while an account is full, with a
+  two-second timeout; when it does not answer the lines keep the names alone. It needs an
+  `ffmpeg` whose `drawtext` has `text_align`, as the Dispatcharr image has.
+- **Font for the channels in use**: a `.ttf`, `.otf` or `.ttc` file inside the data volume
+  for those lines. Empty uses the container's sans-serif font.
+
 ## 0.6.0 — 2026-10-25
 
 - **A second card for a channel that reached the fallback because the provider was full.**
