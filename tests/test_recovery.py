@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -11,6 +12,8 @@ from could_not_dispatch.recovery import (
     ApiError,
     Catalogue,
     Dispatcharr,
+    InUse,
+    Program,
     Recovery,
     SlatedChannel,
     Status,
@@ -37,6 +40,7 @@ class FakeApi:
                          OWN_SLATE[WEB3]: CUSTOM, OWN_SLATE[CALCIO]: CUSTOM}
         self.limits = {PROVIDER: {PROVIDER_PROFILE: 3}, CUSTOM: {CUSTOM_PROFILE: 0}}
         self.busy = 0
+        self.names: dict[str, str] = {}
         self.changes: list[tuple[str, int]] = []
         self.status_calls = 0
         self.status_fails = False
@@ -57,7 +61,8 @@ class FakeApi:
         self.status_calls += 1
         if self.status_fails:
             raise ApiError("GET /proxy/ts/status failed: timed out")
-        return Status(slated=list(self.slated.values()), usage={PROVIDER_PROFILE: self.busy})
+        on_provider = [f"uuid-busy-{index}" for index in range(self.busy)]
+        return Status(slated=list(self.slated.values()), playing={PROVIDER_PROFILE: on_provider})
 
     def catalogue(self, url: str) -> Catalogue:
         assert url == SLATE_URL
@@ -67,6 +72,7 @@ class FakeApi:
             accounts=dict(self.accounts),
             limits={account: dict(profiles) for account, profiles in self.limits.items()},
             slates=frozenset(OWN_SLATE.values()),
+            names=dict(self.names),
         )
 
     def change_stream(self, uuid: str, stream_id: int) -> None:
@@ -493,6 +499,124 @@ def test_the_server_sends_channels_back_only_with_a_key():
 
 def test_the_server_watches_the_url_the_plugin_attaches():
     assert slate_url("127.0.0.1", 9721, "/slate.ts") == SLATE_URL
+
+
+def test_status_keeps_which_channels_hold_each_profile(routed):
+    routed(
+        {
+            "/proxy/ts/status": {
+                "channels": [
+                    {"channel_id": WEB3, "channel_name": "DAZN Web 3", "stream_id": 22924,
+                     "url": channel_card_url(SLATE_URL, WEB3), "client_count": 1,
+                     "m3u_profile_id": CUSTOM_PROFILE},
+                    {"channel_id": CALCIO, "channel_name": "Sky Sport Calcio FHD",
+                     "stream_id": 1289, "url": "http://provider/1289.ts", "client_count": 1,
+                     "m3u_profile_id": PROVIDER_PROFILE},
+                ]
+            }
+        }
+    )
+    status = Dispatcharr("http://dispatcharr", "key").status(SLATE_URL)
+    assert status.playing == {PROVIDER_PROFILE: [CALCIO]}
+    assert status.usage == {PROVIDER_PROFILE: 1}
+
+
+def test_the_catalogue_names_a_channel_by_its_override_first(routed):
+    routed(
+        {
+            "/api/channels/channels/?page_size=500&visibility_filter=all": [
+                {"uuid": WEB3, "name": "DAZN WEB 3 FULL HD", "effective_name": "DAZN | Web 3",
+                 "streams": [2262]},
+                {"uuid": CALCIO, "name": "Sky | Calcio", "streams": [1289]},
+            ],
+            "/api/channels/streams/?page_size=9000": [],
+            "/api/m3u/accounts/": [],
+        }
+    )
+    catalogue = Dispatcharr("http://dispatcharr", "key").catalogue(SLATE_URL)
+    assert catalogue.names == {WEB3: "DAZN | Web 3", CALCIO: "Sky | Calcio"}
+
+
+def test_the_programme_guide_is_asked_for_the_channels_with_a_short_timeout(
+    routed, monkeypatch
+):
+    fake = routed(
+        {
+            "/api/epg/current-programs/": [
+                {"channel_uuid": WEB3, "title": "Genoa - Juventus",
+                 "end_time": "2026-10-28T22:00:00Z"},
+                {"channel_uuid": CALCIO, "title": "", "end_time": "2026-10-28T22:00:00Z"},
+            ]
+        }
+    )
+    timeouts: list[float] = []
+
+    def timed(request: Any, timeout: float) -> Response:
+        timeouts.append(timeout)
+        return fake.urlopen(request, timeout)
+
+    monkeypatch.setattr(recovery_module.urllib.request, "urlopen", timed)
+    programs = Dispatcharr("http://dispatcharr", "key").current_programs([WEB3, CALCIO])
+    assert json.loads(fake.requests[0].data) == {"channel_uuids": [WEB3, CALCIO]}
+    assert fake.requests[0].get_method() == "POST"
+    assert timeouts == [2.0]
+    ends_at = datetime(2026, 10, 28, 22, tzinfo=UTC).timestamp()
+    assert programs == {WEB3: Program(title="Genoa - Juventus", ends_at=ends_at)}
+
+
+def test_the_channels_in_use_are_the_ones_on_a_full_account_named_from_the_catalogue():
+    recovery, api, _ = build()
+    api.busy = 3
+    api.names = {"uuid-busy-0": "Sky | Calcio", "uuid-busy-1": "DAZN | Web 4"}
+    recovery.tick(0)
+    assert [channel.name for channel in recovery.in_use(5)] == [
+        "DAZN | Web 4",
+        "Sky | Calcio",
+        "uuid-busy-2",
+    ]
+    assert recovery.in_use(21) == []
+
+
+def test_nobody_is_listed_while_the_provider_has_room():
+    recovery, api, _ = build()
+    api.busy = 2
+    recovery.tick(0)
+    assert recovery.in_use(0) == []
+
+
+def _listening(watching: int = 1) -> tuple[Recovery, FakeApi, list[list[InUse]], list[str]]:
+    api, lines, heard = FakeApi(), [], []
+    recovery = Recovery(api, SLATE_URL, lambda: watching, lines.append, on_in_use=heard.append)
+    return recovery, api, heard, lines
+
+
+def test_the_channels_in_use_are_reported_after_every_check():
+    recovery, api, heard, _ = _listening()
+    api.busy = 3
+    recovery.tick(0)
+    api.busy = 2
+    recovery.tick(30)
+    assert [len(channels) for channels in heard] == [3, 0]
+
+
+def test_the_channels_in_use_are_not_reported_while_the_api_is_down():
+    recovery, api, heard, _ = _listening()
+    api.status_fails = True
+    recovery.tick(0)
+    assert heard == []
+
+
+def test_a_failing_caption_does_not_stop_a_channel_from_going_back():
+    api, lines = FakeApi(), []
+
+    def broken(channels: list[InUse]) -> None:
+        raise OSError("disk full")
+
+    recovery = Recovery(api, SLATE_URL, lambda: 1, lines.append, on_in_use=broken)
+    api.put_on_slate(WEB3)
+    run(recovery, 0, 40)
+    assert api.changes == [(WEB3, 2262)]
+    assert sum("could not update the channels in use" in line for line in lines) == 1
 
 
 def test_viewers_of_either_card_count_as_watching_the_fallback(monkeypatch):

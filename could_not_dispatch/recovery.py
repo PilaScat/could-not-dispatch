@@ -8,12 +8,14 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Protocol
 
 from .constants import (
     API_TIMEOUT_SECONDS,
     CATALOGUE_RETRY_SECONDS,
     CHAINS_REFRESH_SECONDS,
+    EPG_TIMEOUT_SECONDS,
     PLUGIN_VERSION,
     RECOVERY_CROWDED_MEMORY_SECONDS,
     RECOVERY_FAST_POLL_SECONDS,
@@ -42,7 +44,11 @@ class SlatedChannel:
 @dataclass(frozen=True)
 class Status:
     slated: list[SlatedChannel] = field(default_factory=list)
-    usage: dict[int, int] = field(default_factory=dict)
+    playing: dict[int, list[str]] = field(default_factory=dict)
+
+    @property
+    def usage(self) -> dict[int, int]:
+        return {profile: len(uuids) for profile, uuids in self.playing.items()}
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,19 @@ class Catalogue:
     accounts: dict[int, int] = field(default_factory=dict)
     limits: dict[int, dict[int, int]] = field(default_factory=dict)
     slates: frozenset[int] = frozenset()
+    names: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class InUse:
+    uuid: str
+    name: str
+
+
+@dataclass(frozen=True)
+class Program:
+    title: str
+    ends_at: float
 
 
 def _as_int(value: object) -> int:
@@ -58,6 +77,13 @@ def _as_int(value: object) -> int:
         return int(str(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _timestamp(value: object) -> float | None:
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except ValueError:
+        return None
 
 
 def _rows(payload: object) -> list[dict]:
@@ -103,7 +129,7 @@ class Dispatcharr:
         payload = self._request("/proxy/ts/status")
         rows = payload.get("channels", []) if isinstance(payload, dict) else []
         slated: list[SlatedChannel] = []
-        usage: dict[int, int] = {}
+        playing: dict[int, list[str]] = {}
         for row in _rows(rows):
             uuid = str(row.get("channel_id") or "")
             if not uuid:
@@ -111,7 +137,7 @@ class Dispatcharr:
             if not is_card_url(row.get("url"), url):
                 profile = _as_int(row.get("m3u_profile_id"))
                 if profile:
-                    usage[profile] = usage.get(profile, 0) + 1
+                    playing.setdefault(profile, []).append(uuid)
                 continue
             slated.append(
                 SlatedChannel(
@@ -121,15 +147,17 @@ class Dispatcharr:
                     stream_id=_as_int(row.get("stream_id")),
                 )
             )
-        return Status(slated=slated, usage=usage)
+        return Status(slated=slated, playing=playing)
 
     def catalogue(self, url: str) -> Catalogue:
         chains: dict[str, list[int]] = {}
+        names: dict[str, str] = {}
         for row in self._collect("/api/channels/channels/?page_size=500&visibility_filter=all"):
             uuid = str(row.get("uuid") or "")
             if uuid:
                 streams = (_as_int(value) for value in row.get("streams") or [])
                 chains[uuid] = [stream for stream in streams if stream]
+                names[uuid] = str(row.get("effective_name") or row.get("name") or uuid)
         accounts: dict[int, int] = {}
         slates: set[int] = set()
         for row in self._collect("/api/channels/streams/?page_size=9000"):
@@ -149,13 +177,34 @@ class Dispatcharr:
                 if isinstance(profile, dict) and profile.get("is_active") is not False
             }
         return Catalogue(
-            chains=chains, accounts=accounts, limits=limits, slates=frozenset(slates)
+            chains=chains,
+            accounts=accounts,
+            limits=limits,
+            slates=frozenset(slates),
+            names=names,
         )
 
     def change_stream(self, uuid: str, stream_id: int) -> None:
         self._request(
             f"/proxy/ts/change_stream/{uuid}", method="POST", body={"stream_id": stream_id}
         )
+
+    def current_programs(self, uuids: Sequence[str]) -> dict[str, Program]:
+        payload = self._request(
+            "/api/epg/current-programs/",
+            method="POST",
+            body={"channel_uuids": list(uuids)},
+            timeout=EPG_TIMEOUT_SECONDS,
+        )
+        programs: dict[str, Program] = {}
+        for row in payload if isinstance(payload, list) else []:
+            if not isinstance(row, dict):
+                continue
+            uuid, title = str(row.get("channel_uuid") or ""), str(row.get("title") or "").strip()
+            ends_at = _timestamp(row.get("end_time"))
+            if uuid and title and ends_at is not None:
+                programs[uuid] = Program(title=title, ends_at=ends_at)
+        return programs
 
     def _collect(self, path: str) -> list[dict]:
         rows: list[dict] = []
@@ -173,7 +222,11 @@ class Dispatcharr:
         return rows
 
     def _request(
-        self, path: str, method: str = "GET", body: Mapping[str, object] | None = None
+        self,
+        path: str,
+        method: str = "GET",
+        body: Mapping[str, object] | None = None,
+        timeout: float = API_TIMEOUT_SECONDS,
     ) -> object:
         headers = {
             "X-API-Key": self.api_key,
@@ -188,7 +241,7 @@ class Dispatcharr:
             f"{self.base_url}{path}", data=data, method=method, headers=headers
         )
         try:
-            with urllib.request.urlopen(request, timeout=API_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read()
         except urllib.error.HTTPError as error:
             detail = error.read()[:ERROR_BODY_CHARS].decode("utf-8", "ignore").strip()
@@ -226,6 +279,7 @@ class Recovery:
         fast_poll_seconds: float = RECOVERY_FAST_POLL_SECONDS,
         crowded_memory_seconds: float = RECOVERY_CROWDED_MEMORY_SECONDS,
         chains_refresh_seconds: float = CHAINS_REFRESH_SECONDS,
+        on_in_use: Callable[[list[InUse]], None] | None = None,
     ) -> None:
         self._api = api
         self._slate_url = slate_url
@@ -241,6 +295,9 @@ class Recovery:
         self._catalogue = Catalogue()
         self._catalogue_at: float | None = None
         self._full_at: dict[int, float] = {}
+        self._playing: dict[int, list[str]] = {}
+        self._on_in_use = on_in_use
+        self._in_use_failing = False
         self._api_down = False
         self._stopping = threading.Event()
 
@@ -278,6 +335,7 @@ class Recovery:
             self._forget_settled(now)
             return
         self._api_down = False
+        self._playing = status.playing
         room = self._room(status.usage)
         for account, free in room.items():
             if free <= 0:
@@ -287,6 +345,31 @@ class Recovery:
             for channel in sorted(watched, key=lambda channel: self._since(channel, now)):
                 self._consider(channel, now, room)
         self._forget_settled(now)
+        self._report_in_use(now)
+
+    def in_use(self, now: float) -> list[InUse]:
+        uuids = {
+            uuid
+            for account, profiles in self._catalogue.limits.items()
+            if self._was_full(account, now)
+            for profile in profiles
+            for uuid in self._playing.get(profile, [])
+        }
+        names = self._catalogue.names
+        channels = [InUse(uuid=uuid, name=names.get(uuid, uuid)) for uuid in uuids]
+        return sorted(channels, key=lambda channel: (channel.name.casefold(), channel.uuid))
+
+    def _report_in_use(self, now: float) -> None:
+        if self._on_in_use is None:
+            return
+        try:
+            self._on_in_use(self.in_use(now))
+        except Exception as error:
+            if not self._in_use_failing:
+                self._log(f"could not update the channels in use: {error}")
+            self._in_use_failing = True
+            return
+        self._in_use_failing = False
 
     def crowded(self, uuid: str, now: float | None = None) -> bool:
         moment = time.monotonic() if now is None else now
