@@ -287,16 +287,19 @@ class SlateServer(ThreadingHTTPServer):
         chunk_timeout: float = CHUNK_TIMEOUT,
         crowded_broadcaster: Broadcaster | None = None,
         crowded: Callable[[str], bool] | None = None,
+        name_of: Callable[[str], str] | None = None,
     ) -> None:
         self.broadcaster = broadcaster
         self.stream_path = stream_path
         self.chunk_timeout = chunk_timeout
         self.crowded_broadcaster = crowded_broadcaster
         self.crowded = crowded or (lambda uuid: False)
+        self.name_of = name_of or (lambda uuid: uuid)
         super().__init__(address, SlateHandler)
 
     def card_for(self, channel: str) -> Broadcaster:
         if self.crowded_broadcaster is not None and channel and self.crowded(channel):
+            _log(f"{self.name_of(channel)} gets the card for a full provider")
             return self.crowded_broadcaster
         return self.broadcaster
 
@@ -446,6 +449,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.path,
         crowded_broadcaster=crowded_broadcaster,
         crowded=recovery.crowded if recovery is not None else None,
+        name_of=recovery.name_of if recovery is not None else None,
     )
 
     def request_shutdown(signum: int, frame: FrameType | None) -> None:

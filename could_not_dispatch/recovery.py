@@ -264,6 +264,13 @@ class Episode:
     tries: int = 0
     crowded: bool = False
     sent_crowded_at: float | None = None
+    sent_at: float | None = None
+
+
+@dataclass(frozen=True)
+class FullSeen:
+    at: float
+    holders: frozenset[str]
 
 
 class Recovery:
@@ -294,7 +301,7 @@ class Recovery:
         self._episodes: dict[str, Episode] = {}
         self._catalogue = Catalogue()
         self._catalogue_at: float | None = None
-        self._full_at: dict[int, float] = {}
+        self._full_seen: dict[int, list[FullSeen]] = {}
         self._playing: dict[int, list[str]] = {}
         self._on_in_use = on_in_use
         self._in_use_failing = False
@@ -337,9 +344,7 @@ class Recovery:
         self._api_down = False
         self._playing = status.playing
         room = self._room(status.usage)
-        for account, free in room.items():
-            if free <= 0:
-                self._full_at[account] = now
+        self._remember_full(now, [account for account, free in room.items() if free <= 0])
         if self._watching() > 0:
             watched = [channel for channel in status.slated if channel.clients > 0]
             for channel in sorted(watched, key=lambda channel: self._since(channel, now)):
@@ -373,6 +378,8 @@ class Recovery:
 
     def crowded(self, uuid: str, now: float | None = None) -> bool:
         moment = time.monotonic() if now is None else now
+        if self._just_failed(uuid, moment):
+            return False
         catalogue = self._catalogue
         sources = [
             stream for stream in catalogue.chains.get(uuid, []) if stream not in catalogue.slates
@@ -380,9 +387,17 @@ class Recovery:
         if not sources:
             return False
         return all(
-            account is not None and self._was_full(account, moment)
+            account is not None and self._was_full(account, moment, without=uuid)
             for account in (self._account_of(stream) for stream in sources)
         )
+
+    def name_of(self, uuid: str) -> str:
+        return self._catalogue.names.get(uuid, uuid)
+
+    def _just_failed(self, uuid: str, now: float) -> bool:
+        episode = self._episodes.get(uuid)
+        sent = episode.sent_at if episode is not None else None
+        return sent is not None and now - sent < self._waits[0]
 
     def _since(self, channel: SlatedChannel, now: float) -> float:
         episode = self._episodes.get(channel.uuid)
@@ -443,6 +458,7 @@ class Recovery:
             episode.tries += 1
         else:
             episode.sent_crowded_at = now
+        episode.sent_at = now
         episode.due_at = now + self._wait(episode.tries)
         episode.crowded = False
         reason = " as a connection freed up" if not counted else ""
@@ -488,9 +504,28 @@ class Recovery:
             room[account] = sum(profiles.values()) - used
         return room
 
-    def _was_full(self, account: int, now: float) -> bool:
-        seen = self._full_at.get(account)
-        return seen is not None and now - seen <= self._crowded_memory_seconds
+    def _remember_full(self, now: float, accounts: list[int]) -> None:
+        memory = self._crowded_memory_seconds
+        remembered = {
+            account: [seen for seen in observations if now - seen.at <= memory]
+            for account, observations in self._full_seen.items()
+        }
+        for account in accounts:
+            holders = frozenset(
+                uuid
+                for profile in self._catalogue.limits.get(account, {})
+                for uuid in self._playing.get(profile, [])
+            )
+            remembered.setdefault(account, []).append(FullSeen(at=now, holders=holders))
+        self._full_seen = {account: seen for account, seen in remembered.items() if seen}
+
+    def _was_full(self, account: int, now: float, without: str | None = None) -> bool:
+        limit = sum(self._catalogue.limits.get(account, {}).values())
+        return any(
+            now - seen.at <= self._crowded_memory_seconds
+            and len(seen.holders - {without}) >= limit
+            for seen in self._full_seen.get(account, [])
+        )
 
     def _bounced(self, episode: Episode, now: float) -> bool:
         sent = episode.sent_crowded_at

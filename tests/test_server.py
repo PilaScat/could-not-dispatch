@@ -407,3 +407,25 @@ def test_the_text_file_is_ready_before_the_card_starts(tmp_path):
         assert path.read_text(encoding="utf-8") == IN_USE_EMPTY_TEXT
     finally:
         broadcaster.close()
+
+
+def test_the_card_for_a_full_provider_is_written_in_the_log_with_the_channel_name(monkeypatch):
+    lines: list[str] = []
+    monkeypatch.setattr(server_module, "_log", lines.append)
+    plain, full = Broadcaster(["ffmpeg"]), Broadcaster(["ffmpeg"])
+    server = SlateServer(
+        ("127.0.0.1", 0),
+        plain,
+        "/slate.ts",
+        crowded_broadcaster=full,
+        crowded=lambda uuid: uuid == "uuid-full",
+        name_of=lambda uuid: f"Channel {uuid}",
+    )
+    try:
+        assert server.card_for("uuid-full") is full
+        assert server.card_for("uuid-other") is plain
+        assert lines == ["Channel uuid-full gets the card for a full provider"]
+    finally:
+        server.server_close()
+        plain.close()
+        full.close()

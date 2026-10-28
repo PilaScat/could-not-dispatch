@@ -40,6 +40,7 @@ class FakeApi:
                          OWN_SLATE[WEB3]: CUSTOM, OWN_SLATE[CALCIO]: CUSTOM}
         self.limits = {PROVIDER: {PROVIDER_PROFILE: 3}, CUSTOM: {CUSTOM_PROFILE: 0}}
         self.busy = 0
+        self.on_provider: list[str] = []
         self.names: dict[str, str] = {}
         self.changes: list[tuple[str, int]] = []
         self.status_calls = 0
@@ -61,7 +62,7 @@ class FakeApi:
         self.status_calls += 1
         if self.status_fails:
             raise ApiError("GET /proxy/ts/status failed: timed out")
-        on_provider = [f"uuid-busy-{index}" for index in range(self.busy)]
+        on_provider = [f"uuid-busy-{index}" for index in range(self.busy)] + self.on_provider
         return Status(slated=list(self.slated.values()), playing={PROVIDER_PROFILE: on_provider})
 
     def catalogue(self, url: str) -> Catalogue:
@@ -451,6 +452,50 @@ def test_a_channel_is_crowded_while_every_source_of_it_is_on_a_full_account():
     assert recovery.crowded(WEB3, 5)
     assert recovery.crowded(CALCIO, 20)
     assert not recovery.crowded(WEB3, 21)
+
+
+def test_a_channel_that_fills_the_account_itself_while_trying_its_sources_is_not_crowded():
+    recovery, api, _ = build()
+    api.busy = 2
+    api.on_provider = [WEB3]
+    recovery.tick(0)
+    assert not recovery.crowded(WEB3, 5)
+    assert recovery.crowded(CALCIO, 5)
+
+
+def test_a_full_account_seen_without_the_channel_counts_for_twenty_seconds():
+    recovery, api, _ = build()
+    api.busy = 3
+    recovery.tick(0)
+    api.busy = 2
+    api.on_provider = [WEB3]
+    recovery.tick(5)
+    assert recovery.crowded(WEB3, 20)
+    assert not recovery.crowded(WEB3, 21)
+
+
+def test_a_channel_back_on_the_card_soon_after_being_sent_back_failed_its_sources():
+    recovery, api, _ = build()
+    api.busy = 3
+    api.put_on_slate(WEB3)
+    recovery.tick(0)
+    api.busy = 2
+    recovery.tick(2)
+    assert api.changes == [(WEB3, 2262)]
+    api.busy = 3
+    recovery.tick(4)
+    assert not recovery.crowded(WEB3, 10)
+    assert recovery.crowded(CALCIO, 10)
+    recovery.tick(35)
+    assert recovery.crowded(WEB3, 36)
+
+
+def test_a_channel_is_named_from_the_catalogue():
+    recovery, api, _ = build()
+    api.names = {WEB3: "DAZN | Web 3"}
+    recovery.tick(0)
+    assert recovery.name_of(WEB3) == "DAZN | Web 3"
+    assert recovery.name_of("uuid-new") == "uuid-new"
 
 
 def test_a_channel_with_a_source_on_an_account_with_room_is_not_crowded():
