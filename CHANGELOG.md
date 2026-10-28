@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1 — 2026-10-28
+
+- **An offline channel no longer gets the card for a full provider when a connection is
+  free.** A channel trying its dead sources holds a provider connection itself, so the plugin
+  could see the provider full because of it, and when the channel fell back it got the card
+  saying every connection is in use. A full provider is now judged without the channel that
+  asks, and a channel back on the card within 30 seconds of being sent back to its stream gets
+  the usual card, since its sources were just tried and failed. The same channel is no longer
+  sent straight back to its dead sources as if waiting for a connection: it waits the usual
+  30 seconds. The log now says `<channel> gets the card for a full provider` each time that
+  card is given.
+- **Height of the channels in use (%)**: where the lines start, from the top of the picture,
+  between 0 and 95. 58.5 by default, where they were in 0.7.0.
+
 ## 0.7.0 — 2026-10-28
 
 - **The card for a full provider can say which channels hold the connections.** With
