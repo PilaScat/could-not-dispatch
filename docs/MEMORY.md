@@ -75,6 +75,17 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 - **The card runs at 25 fps by default** (0.4.0): Jellyfin takes a transcode's frame rate from
   its first input, so a session that began on a 5 fps card stayed at 5 fps after going back to
   the provider. Saved settings keep their stored value.
+- **A picture enters at 5 fps and the threads are fixed** (0.7.2, issue #4: 1 CPU limit on
+  Kubernetes, card at the limit). `-loop 1` used to read, decode and scale the file at the full
+  25 fps, and ffmpeg sized its threads on the cores it sees, which in a pod are the node's: 119
+  threads on 16 cores. Now `-framerate 5`, `-threads 1` on the decoder, `-filter_threads 1` and
+  `-threads 2` on x264. Under `docker run --cpus=1`, 1080p PNG: 0.73 → 0.37 core, 910 → 291 MB,
+  first megabyte 4.50 → 1.30 s, PSNR on a quadrant 66.76 → 66.94 dB. Not 1 fps, though it saves
+  0.05 core more: all 25 frames of each second then reach x264 together, the output comes in
+  blocks with gaps up to 0.85 s, against 0.19 s at 5 fps, and they hit the CPU quota, 124 ms/s
+  of throttling against 0. Looping a pre-encoded file with `-c copy` costs about 0 CPU, but
+  needs a cache, a loop length aligned to AAC frames and a new check of the seam on every
+  client, and the card with `drawtext` would still encode: left out unless this is not enough.
 - **State lives in `.runtime/state.json`**, never in the plugin settings: saving the settings
   replaces the whole object.
 
