@@ -2,7 +2,7 @@
 
 ## 0.7.2 — 2026-10-31
 
-- **The card uses much less CPU and memory** (issue #4). A still picture was read, decoded and
+- **The card uses much less CPU and memory** (PilaScat/could-not-dispatch#4). A still picture was read, decoded and
   scaled at the card's full frame rate, and `ffmpeg` sized its threads on every core it could
   see, which in a container limited to one CPU are all the host's. A picture now enters at
   5 fps, while the stream still leaves at the frame rate you set, and the threads are fixed.
