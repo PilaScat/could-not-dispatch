@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.2 — 2026-10-31
+
+- **The card uses much less CPU and memory** (issue #4). A still picture was read, decoded and
+  scaled at the card's full frame rate, and `ffmpeg` sized its threads on every core it could
+  see, which in a container limited to one CPU are all the host's. A picture now enters at
+  5 fps, while the stream still leaves at the frame rate you set, and the threads are fixed.
+  Limited to 1 CPU, a 1080p picture went from 0.73 to 0.37 core and from 910 to 291 MB, a 720p
+  picture from 0.55 to 0.18 core and from 558 to 183 MB, and an 8-second 1080p video from 901 to
+  287 MB with almost the same CPU. The first megabyte of a 1080p picture arrives in 1.30 s
+  rather than 4.50 s. The card with the channels in use gets the same saving, and its text is
+  read five times a second instead of on every frame.
+
 ## 0.7.1 — 2026-10-28
 
 - **An offline channel no longer gets the card for a full provider when a connection is
