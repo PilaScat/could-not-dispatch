@@ -9,12 +9,15 @@ from .constants import (
     AUDIO_SAMPLE_RATE,
     AUTO_MAX_HEIGHT,
     AUTO_MAX_WIDTH,
+    DECODER_THREADS,
     DEFAULT_AUDIO_KBPS,
     DEFAULT_FPS,
     DEFAULT_HEIGHT,
     DEFAULT_VIDEO_KBPS,
     DEFAULT_WIDTH,
     DRAWTEXT_OPTIONS,
+    FILTER_THREADS,
+    IMAGE_INPUT_FPS,
     IN_USE_COLOUR,
     IN_USE_FONT_FAMILY,
     IN_USE_FONT_SIZE,
@@ -29,6 +32,7 @@ from .constants import (
     MUX_OVERHEAD,
     VBV_BUFFER_SECONDS,
     X264_CONSTANT_BITRATE,
+    X264_THREADS,
 )
 from .media import Media
 
@@ -177,6 +181,7 @@ def build_command(
     caption: Caption | None = None,
 ) -> list[str]:
     command = [executable, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    command += ["-filter_threads", str(FILTER_THREADS), "-threads", str(DECODER_THREADS)]
     if supports_readrate:
         pacing = [
             "-readrate",
@@ -188,7 +193,15 @@ def build_command(
         pacing = ["-re"]
 
     if media.kind == KIND_IMAGE:
-        command += [*pacing, "-loop", "1", "-i", str(media.path)]
+        command += [
+            *pacing,
+            "-loop",
+            "1",
+            "-framerate",
+            str(min(IMAGE_INPUT_FPS, options.fps)),
+            "-i",
+            str(media.path),
+        ]
     else:
         command += [
             "-fflags",
@@ -212,7 +225,8 @@ def build_command(
         ]
 
     command += ["-map", "0:v:0", "-map", audio_map]
-    command += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+    command += ["-c:v", "libx264", "-threads", str(X264_THREADS)]
+    command += ["-preset", "veryfast", "-pix_fmt", "yuv420p"]
     video_filter = scale_filter(options)
     if caption is not None:
         video_filter = f"{video_filter},{caption_filter(caption, options)}"

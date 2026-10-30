@@ -88,6 +88,45 @@ def test_video_loops_with_stream_loop_and_regenerates_timestamps():
     assert not any(part.startswith("anullsrc=") for part in command)
 
 
+def test_a_still_picture_is_decoded_five_times_a_second_and_still_leaves_at_the_full_rate():
+    command = build_command(
+        Media(Path("/data/slate.png"), KIND_IMAGE, has_audio=False), _options(fps=25)
+    )
+    assert command[command.index("-framerate") + 1] == "5"
+    assert command.index("-framerate") < command.index("-i")
+    assert command[command.index("-r") + 1] == "25"
+    assert command[command.index("-g") + 1] == "25"
+
+
+def test_a_still_picture_is_never_decoded_faster_than_the_card_runs():
+    command = build_command(
+        Media(Path("/data/slate.png"), KIND_IMAGE, has_audio=False), _options(fps=2)
+    )
+    assert command[command.index("-framerate") + 1] == "2"
+
+
+def test_a_video_keeps_its_own_frame_rate_on_the_way_in():
+    command = build_command(
+        Media(Path("/data/slate.mp4"), KIND_VIDEO, has_audio=True), _options()
+    )
+    assert "-framerate" not in command
+
+
+def test_threads_do_not_follow_the_cores_of_the_host():
+    for kind, path in ((KIND_IMAGE, "/data/slate.png"), (KIND_VIDEO, "/data/slate.mp4")):
+        command = build_command(Media(Path(path), kind, has_audio=False), _options())
+        first_input = command.index("-i")
+        filter_threads = command.index("-filter_threads")
+        decoder_threads = command.index("-threads")
+        encoder_threads = command.index("-threads", first_input)
+        assert filter_threads < first_input, kind
+        assert command[filter_threads + 1] == "1", kind
+        assert decoder_threads < first_input, kind
+        assert command[decoder_threads + 1] == "1", kind
+        assert encoder_threads > command.index("-c:v"), kind
+        assert command[encoder_threads + 1] == "2", kind
+
+
 def test_a_silent_video_still_gets_an_audio_track():
     command = build_command(
         Media(Path("/data/slate.mp4"), KIND_VIDEO, has_audio=False), _options()

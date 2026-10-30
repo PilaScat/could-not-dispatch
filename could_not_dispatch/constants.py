@@ -82,6 +82,10 @@ KIND_IMAGE = "image"
 KIND_VIDEO = "video"
 
 X264_CONSTANT_BITRATE = "nal-hrd=cbr:filler=1"
+IMAGE_INPUT_FPS = 5
+DECODER_THREADS = 1
+FILTER_THREADS = 1
+X264_THREADS = 2
 
 IMAGE_FORMAT_NAMES = frozenset(
     {
