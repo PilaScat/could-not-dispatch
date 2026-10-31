@@ -123,7 +123,9 @@ connection: an `STD` M3U account uploaded from a file (`POST /api/m3u/accounts/`
 different query (`http://127.0.0.1:9721/slate.ts?bench=a`: no `channel`, so the usual card).
 Three channels `[test stream, card]`: A takes the slot, B and C fall on the card, A leaves.
 With a card set for a full provider, B and C get that one: a second ffmpeg on that file starts
-when B connects.
+when B connects. A channel just created is not in the catalogue yet, so its first arrival gets the
+usual card: connect B once for about 10 s, leave, wait 35 s, and only then start the bench. A new
+account also gets the existing `Default Group`: delete only the group the bench created.
 After 120 s `/proxy/ts/status` must show one channel on that profile, and the other still on
 the card; with the shared card of 0.2.1 there were two. Since 0.4.0 the other one does not
 even try while the provider is full, so there is no `No profiles available with connection
