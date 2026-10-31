@@ -112,6 +112,12 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 - Dispatcharr fetches the card through the channel's stream profile, like any source: a profile
   that cannot start (a wrapper script saved with CRLF endings, or one that never exits on a
   refused source) keeps the channel off the card too.
+- A source change sends timestamps backwards with the `FFmpeg` and `Proxy` stream profiles, and
+  Jellyfin's HLS remux (`-copyts`) then stops cutting segments: issue #4, a player stuck after a
+  try on a dead source. On 31 October 2026, with Jellyfin's flags over 130 s and two tries, 13
+  segments on `FFmpeg` and 19 on `Proxy`, against 44-46 with no try and 49 on reservoarr, whose
+  `-output_ts_offset` only ever jumps forwards. Each silent source also leaves the viewer 9.5 s
+  without data, a refusing one about 1.5 s. Image and video behave alike.
 - On Windows the `posix_only` and `proc_fs_only` tests are skipped and `mypy .` reports
   `os.WNOHANG`; `mypy --platform linux .` is clean. The CI on Linux is the reference.
 
