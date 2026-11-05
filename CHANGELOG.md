@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.3 — 2026-11-05
+
+- **A channel goes back from the card only to a stream that answers**
+  (PilaScat/could-not-dispatch#4). The plugin used to send the channel to its first stream
+  unchecked: when that stream was still dead, Dispatcharr tried it while the viewer waited, and
+  each try restarted the timestamps, which stalls Jellyfin's HLS remux. The plugin now opens
+  the channel's streams in order and sends it to the first that sends data; when none does,
+  the viewer stays on the card undisturbed. Each stream gets Dispatcharr's Stream Startup
+  Timeout, 30 seconds in all, and holds a provider connection while it is checked, so nobody
+  takes the last one meanwhile. Streams on accounts at their limit are skipped, and when all
+  are the channel waits for a free connection without counting a try. On a bench with two
+  tries in 130 seconds, Jellyfin cut 46 segments with `FFmpeg` instead of 13, and 45 with
+  `Proxy` instead of 19. When the check cannot run, channels go back unchecked as before, and
+  the log says so once.
+- A switch to a stream that works can still stall Jellyfin with the `FFmpeg` profile
+  (Dispatcharr/Dispatcharr#1946). The README points to a Reservoarr profile that keeps the
+  timestamps going forwards.
+- The README is shorter and shows both cards. The API key's help says when a channel goes back:
+  after 30 seconds, then at longer intervals.
+
 ## 0.7.2 — 2026-10-31
 
 - **The card uses much less CPU and memory** (PilaScat/could-not-dispatch#4). A still picture was read, decoded and
