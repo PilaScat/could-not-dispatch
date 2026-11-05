@@ -16,12 +16,15 @@ from .constants import (
     CATALOGUE_RETRY_SECONDS,
     CHAINS_REFRESH_SECONDS,
     EPG_TIMEOUT_SECONDS,
+    PLUGIN_KEY,
     PLUGIN_VERSION,
     RECOVERY_CROWDED_MEMORY_SECONDS,
     RECOVERY_FAST_POLL_SECONDS,
     RECOVERY_POLL_SECONDS,
     RECOVERY_SETTLED_SECONDS,
     RECOVERY_WAIT_SECONDS,
+    SOURCE_CHECK_ACTION,
+    SOURCE_CHECK_BUDGET_SECONDS,
 )
 
 ERROR_BODY_CHARS = 200
@@ -119,11 +122,14 @@ class ChannelApi(Protocol):
 
     def change_stream(self, uuid: str, stream_id: int) -> None: ...
 
+    def first_worth_trying(self, streams: Sequence[int]) -> int | None: ...
+
 
 class Dispatcharr:
-    def __init__(self, base_url: str, api_key: str) -> None:
+    def __init__(self, base_url: str, api_key: str, plugin_key: str = PLUGIN_KEY) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.plugin_key = plugin_key
 
     def status(self, url: str) -> Status:
         payload = self._request("/proxy/ts/status")
@@ -188,6 +194,20 @@ class Dispatcharr:
         self._request(
             f"/proxy/ts/change_stream/{uuid}", method="POST", body={"stream_id": stream_id}
         )
+
+    def first_worth_trying(self, streams: Sequence[int]) -> int | None:
+        path = f"/api/plugins/plugins/{self.plugin_key}/run/"
+        payload = self._request(
+            path,
+            method="POST",
+            body={"action": SOURCE_CHECK_ACTION, "params": {"streams": list(streams)}},
+            timeout=SOURCE_CHECK_BUDGET_SECONDS + API_TIMEOUT_SECONDS,
+        )
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            message = result.get("message") if isinstance(result, dict) else payload
+            raise ApiError(f"POST {path} did not check the streams: {message}")
+        return _as_int(result.get("stream_id")) or None
 
     def current_programs(self, uuids: Sequence[str]) -> dict[str, Program]:
         payload = self._request(
@@ -305,6 +325,7 @@ class Recovery:
         self._playing: dict[int, list[str]] = {}
         self._on_in_use = on_in_use
         self._in_use_failing = False
+        self._check_failing = False
         self._api_down = False
         self._stopping = threading.Event()
 
@@ -443,6 +464,16 @@ class Recovery:
             episode.crowded = False
             self._log(f"{channel.name} has no stream besides the fallback")
             return False
+        if counted:
+            target = self._worth_trying(channel, target)
+        if target is None:
+            episode.tries += 1
+            episode.due_at = now + self._wait(episode.tries)
+            self._log(
+                f"{channel.name} stays on the fallback after {waited:.0f}s: "
+                f"none of its streams answered"
+            )
+            return False
         try:
             self._api.change_stream(channel.uuid, target)
         except ApiError as error:
@@ -467,6 +498,20 @@ class Recovery:
             f"on the fallback{reason}"
         )
         return True
+
+    def _worth_trying(self, channel: SlatedChannel, first: int) -> int | None:
+        slates = self._catalogue.slates
+        chain = self._catalogue.chains.get(channel.uuid, [])
+        streams = [s for s in chain if s != channel.stream_id and s not in slates] or [first]
+        try:
+            target = self._api.first_worth_trying(streams)
+        except ApiError as error:
+            if not self._check_failing:
+                self._log(f"could not check the streams, sending channels back unchecked: {error}")
+            self._check_failing = True
+            return first
+        self._check_failing = False
+        return target
 
     def _refresh(self, now: float, unknown: bool) -> None:
         age = None if self._catalogue_at is None else now - self._catalogue_at

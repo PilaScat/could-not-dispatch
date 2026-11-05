@@ -17,10 +17,21 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   from channels excluded since, and move it back to the end where a stream was added after it.
 - **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 30 s on the card,
   then after 1, 2 and 5 minutes, then every 5 minutes (0.5.0; 120 s, 4, 8 and 15 minutes
-  before). A failed try costs the viewer about 3 s of chain walking per refusing stream while
-  the card stays on screen. A channel on the card is recognised by its URL: the slate URL
+  before). A channel on the card is recognised by its URL: the slate URL
   alone or with `?channel=<uuid>` and nothing else, so the bench's `?bench=a` stays a provider
   stream.
+- **A timed return checks the streams first** (0.7.3, issue #4). A try on a dead source left
+  the viewer 9.5 s without data per silent stream, and with the `FFmpeg` profile a timestamp
+  jump that stalls Jellyfin. The server asks the plugin's hidden `check_sources` action, which
+  runs inside Dispatcharr because only there the URL (profile transform, XC credentials) and
+  the user agent are known: it uses `_resolve_live_stream_url`, private, so if Dispatcharr
+  renames it the action fails and channels go back unchecked, logged once. Streams are opened
+  in chain order, on the first profile with room, and closed at the first bytes; the channel
+  goes to the first that answers. A stream on a full account, or not over HTTP, is left to
+  Dispatcharr unchecked, and so is one past a 30 s budget, since the recovery loop waits for
+  the answer. The check is outside Dispatcharr's connection count: a provider that still
+  counts the closed connection could refuse the switch right after. A return as a connection
+  frees up is not checked: its streams did not fail.
 - **A second card for a full provider** (0.6.0, issue #1, chosen by the operator on 24 October
   2026: two cards, not the three asked for). Each fallback stream points at
   `slate.ts?channel=<uuid>`, so the server knows the channel at connect time and serves the
@@ -116,8 +127,9 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   Jellyfin's HLS remux (`-copyts`) then stops cutting segments: issue #4, a player stuck after a
   try on a dead source. On 31 October 2026, with Jellyfin's flags over 130 s and two tries, 13
   segments on `FFmpeg` and 19 on `Proxy`, against 44-46 with no try and 49 on reservoarr, whose
-  `-output_ts_offset` only ever jumps forwards. Each silent source also leaves the viewer 9.5 s
-  without data, a refusing one about 1.5 s. Image and video behave alike.
+  `-output_ts_offset` only ever jumps forwards, set per channel with `RESV_TS_CHANNEL={channelId}`.
+  Each silent source also leaves the viewer 9.5 s without data, a refusing one about 1.5 s.
+  Image and video behave alike. Reported upstream as Dispatcharr#1945.
 - On Windows the `posix_only` and `proc_fs_only` tests are skipped and `mypy .` reports
   `os.WNOHANG`; `mypy --platform linux .` is clean. The CI on Linux is the reference.
 

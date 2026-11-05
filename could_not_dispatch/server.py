@@ -32,6 +32,7 @@ from .constants import (
     KIND_IMAGE,
     KIND_VIDEO,
     LISTEN_HOST,
+    PLUGIN_KEY,
     PLUGIN_VERSION,
     PRIME_BUFFER_BYTES,
     PRIME_TARGET_BYTES,
@@ -390,6 +391,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--video-kbps", type=int, default=DEFAULT_VIDEO_KBPS)
+    parser.add_argument("--plugin-key", default=PLUGIN_KEY)
     return parser.parse_args(argv)
 
 
@@ -398,7 +400,11 @@ def slate_url(host: str, port: int, path: str) -> str:
 
 
 def build_recovery(
-    url: str, api_key: str, *broadcasters: Broadcaster, in_use_file: Path | None = None
+    url: str,
+    api_key: str,
+    *broadcasters: Broadcaster,
+    in_use_file: Path | None = None,
+    plugin_key: str = PLUGIN_KEY,
 ) -> Recovery | None:
     if not api_key:
         return None
@@ -406,7 +412,7 @@ def build_recovery(
     def watching() -> int:
         return sum(broadcaster.subscriber_count() for broadcaster in broadcasters)
 
-    api = Dispatcharr(DISPATCHARR_URL, api_key)
+    api = Dispatcharr(DISPATCHARR_URL, api_key, plugin_key)
     on_in_use = None
     if in_use_file is not None:
         on_in_use = InUseCaption(InUseFile(in_use_file), api.current_programs, _log).update
@@ -444,6 +450,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         api_key,
         *cards,
         in_use_file=caption.text_file if caption is not None else None,
+        plugin_key=args.plugin_key,
     )
     server = SlateServer(
         (args.host, args.port),

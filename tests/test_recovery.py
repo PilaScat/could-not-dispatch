@@ -48,6 +48,9 @@ class FakeApi:
         self.change_fails = False
         self.capacity_refusals = 0
         self.catalogue_calls = 0
+        self.dead: set[int] = set()
+        self.checks: list[list[int]] = []
+        self.check_fails = False
 
     def put_on_slate(self, uuid: str, clients: int = 1) -> None:
         self.slated[uuid] = SlatedChannel(
@@ -86,6 +89,12 @@ class FakeApi:
             raise ApiError("POST change_stream returned 404")
         self.changes.append((uuid, stream_id))
         self.take_off_slate(uuid)
+
+    def first_worth_trying(self, streams: list[int]) -> int | None:
+        self.checks.append(list(streams))
+        if self.check_fails:
+            raise ApiError("POST /api/plugins/plugins/could_not_dispatch/run/ returned 500")
+        return next((stream for stream in streams if stream not in self.dead), None)
 
 
 def build(
@@ -545,6 +554,94 @@ def test_changing_stream_posts_the_stream_id_with_the_key(routed):
     assert request.full_url == f"http://dispatcharr/proxy/ts/change_stream/{WEB3}"
     assert json.loads(request.data) == {"stream_id": 2262}
     assert request.get_header("X-api-key") == "secret"
+
+
+def test_a_timed_return_goes_to_the_first_stream_that_answers():
+    recovery, api, lines = build()
+    api.dead = {2262}
+    api.put_on_slate(WEB3)
+    run(recovery, 0, 30)
+    assert api.checks == [[2262, 2263]]
+    assert api.changes == [(WEB3, 2263)]
+    assert "sent Channel uuid-web3 back to stream 2263 after 30s on the fallback" in lines
+
+
+def test_with_no_stream_answering_the_channel_stays_on_the_card_until_the_next_try():
+    recovery, api, lines = build()
+    api.dead = {2262, 2263}
+    api.put_on_slate(WEB3)
+    run(recovery, 0, 30)
+    assert api.changes == []
+    assert lines[-1] == (
+        "Channel uuid-web3 stays on the fallback after 30s: none of its streams answered"
+    )
+    run(recovery, 40, 80)
+    assert len(api.checks) == 1
+    api.dead = set()
+    recovery.tick(90)
+    assert api.changes == [(WEB3, 2262)]
+
+
+def test_a_return_as_a_connection_frees_up_is_not_checked():
+    recovery, api, _ = build()
+    api.busy = 3
+    api.put_on_slate(WEB3)
+    recovery.tick(0)
+    api.busy = 2
+    recovery.tick(2)
+    assert api.changes == [(WEB3, 2262)]
+    assert api.checks == []
+
+
+def test_when_the_check_fails_channels_go_back_unchecked_and_it_is_logged_once():
+    recovery, api, lines = build()
+    api.check_fails = True
+    api.put_on_slate(WEB3)
+    api.put_on_slate(CALCIO)
+    run(recovery, 0, 30)
+    assert sorted(api.changes) == [(CALCIO, 1289), (WEB3, 2262)]
+    assert sum("could not check the streams" in line for line in lines) == 1
+
+
+def test_checking_the_streams_runs_the_plugin_action(routed):
+    fake = routed(
+        {
+            "/api/plugins/plugins/cnd/run/": {
+                "success": True, "result": {"status": "ok", "stream_id": 2263},
+            }
+        }
+    )
+    api = Dispatcharr("http://dispatcharr", "secret", "cnd")
+    assert api.first_worth_trying([2262, 2263]) == 2263
+    request = fake.requests[0]
+    assert request.get_method() == "POST"
+    assert json.loads(request.data) == {
+        "action": "check_sources", "params": {"streams": [2262, 2263]},
+    }
+
+
+def test_a_check_with_no_stream_answering_reads_as_none(routed):
+    routed(
+        {
+            "/api/plugins/plugins/could_not_dispatch/run/": {
+                "success": True, "result": {"status": "ok", "stream_id": None},
+            }
+        }
+    )
+    assert Dispatcharr("http://dispatcharr", "key").first_worth_trying([2262]) is None
+
+
+def test_a_check_the_plugin_refuses_is_an_api_error(routed):
+    routed(
+        {
+            "/api/plugins/plugins/could_not_dispatch/run/": {
+                "success": True,
+                "result": {"status": "error", "message": "Unknown action 'check_sources'."},
+            }
+        }
+    )
+    with pytest.raises(ApiError, match="Unknown action"):
+        Dispatcharr("http://dispatcharr", "key").first_worth_trying([2262])
 
 
 def test_the_server_sends_channels_back_only_with_a_key():

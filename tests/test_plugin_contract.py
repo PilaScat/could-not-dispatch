@@ -277,6 +277,20 @@ def test_without_a_card_for_a_full_provider_the_server_gets_none(
     assert "--full-media" not in arguments
 
 
+def test_the_server_gets_the_plugin_key_it_checks_streams_through(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    arguments = _started_arguments(loaded_module, monkeypatch, None)
+    expected = loaded_module.BASE_DIR.name.replace(" ", "_").lower()
+    assert arguments[arguments.index("--plugin-key") + 1] == expected
+
+
+def test_the_stream_check_is_an_action_without_a_button(loaded_module, manifest):
+    assert "check_sources" not in [action["id"] for action in manifest["actions"]]
+    result = loaded_module.Plugin().run("check_sources", {"streams": [1]}, {"settings": {}})
+    assert not str(result.get("message", "")).startswith("Unknown action")
+
+
 def test_with_the_channels_in_use_off_the_server_writes_none(loaded_module, isolated_runtime):
     assert loaded_module.Plugin()._caption({}) is None
     assert loaded_module.Plugin()._caption({"show_in_use": False}) is None

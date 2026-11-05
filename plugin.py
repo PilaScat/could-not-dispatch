@@ -14,7 +14,7 @@ from typing import Any
 
 try:
     from .could_not_dispatch import media as media_module
-    from .could_not_dispatch import process, targeting
+    from .could_not_dispatch import process, sources, targeting
     from .could_not_dispatch import state as state_module
     from .could_not_dispatch.constants import (
         API_KEY_ENV,
@@ -28,6 +28,7 @@ try:
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
         PLUGIN_VERSION,
+        SOURCE_CHECK_ACTION,
         STARTUP_PROBE_SECONDS,
         STREAM_NAME,
         STREAM_PATH,
@@ -37,7 +38,7 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from could_not_dispatch import media as media_module
-    from could_not_dispatch import process, targeting
+    from could_not_dispatch import process, sources, targeting
     from could_not_dispatch import state as state_module
     from could_not_dispatch.constants import (
         API_KEY_ENV,
@@ -51,6 +52,7 @@ except ImportError:
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
         PLUGIN_VERSION,
+        SOURCE_CHECK_ACTION,
         STARTUP_PROBE_SECONDS,
         STREAM_NAME,
         STREAM_PATH,
@@ -135,6 +137,7 @@ class Plugin:
             "remove": self._remove,
             "reapply": self._reapply,
             "restart": self._restart,
+            SOURCE_CHECK_ACTION: self._check_sources,
         }
         handler = handlers.get((action or "").strip().lower())
         if handler is None:
@@ -303,6 +306,13 @@ class Plugin:
         )
         return {"status": "ok", "message": "Fallback restarted."}
 
+    def _check_sources(self, context: dict) -> dict:
+        requested = (context.get("params") or {}).get("streams")
+        ids = [_as_int(value, 0) for value in requested] if isinstance(requested, list) else []
+        resolved = sources.resolve([stream for stream in ids if stream > 0])
+        worth = sources.first_worth_trying(resolved, sources.startup_timeout())
+        return {"status": "ok", "stream_id": worth}
+
     def _status(self, context: dict) -> dict:
         settings = dict(context.get("settings") or {})
         state = self._state()
@@ -416,6 +426,8 @@ class Plugin:
             str(options.fps),
             "--video-kbps",
             str(options.video_kbps),
+            "--plugin-key",
+            self._key,
         ]
         if media.has_audio:
             arguments.append("--has-audio")
