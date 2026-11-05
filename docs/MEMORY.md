@@ -104,6 +104,18 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   of throttling against 0. Looping a pre-encoded file with `-c copy` costs about 0 CPU, but
   needs a cache, a loop length aligned to AAC frames and a new check of the seam on every
   client, and the card with `drawtext` would still encode: left out unless this is not enough.
+- **The encode is built to start fast.** Dispatcharr buffers four 256 KB chunks before it sends
+  a client anything, and a still picture would trickle out at some 15 kbit/s: the card is a true
+  CBR padded with H.264 filler (`nal-hrd=cbr:filler=1`), which lives inside the video and
+  survives the `-c copy` of the `FFmpeg` profile, where TS null packets would be dropped.
+  `-readrate_initial_burst` is sized to cover that megabyte and the lookahead. Inside the image,
+  unconstrained: the megabyte 0.27 s after a cold connection at 720p, 0.52 s at 1080p, 0.02 s
+  joining a running encoder.
+- **Dark gradients set the encoder options.** No `stillimage` tune, which weakens deblocking,
+  and a 4 s VBV buffer instead of 1 s: on the dark quadrant of a 1080p card 61.4 dB at 2000
+  kbit/s against 56.1, 65.5 against 61.8 at 4000. No `zerolatency` either: it drops the
+  lookahead and the picture pulses, a spread of 8.2 dB across frames against 2.6 and a worst
+  frame of 57.9 against 63.1. With the lookahead 2000 beats 4000 without it, hence the default.
 - **State lives in `.runtime/state.json`**, never in the plugin settings: saving the settings
   replaces the whole object.
 
@@ -137,6 +149,9 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   `-output_ts_offset` only ever jumps forwards, set per channel with `RESV_TS_CHANNEL={channelId}`.
   Each silent source also leaves the viewer 9.5 s without data, a refusing one about 1.5 s.
   Image and video behave alike. Reported upstream as Dispatcharr#1946.
+- Dispatcharr rotates the alternates from the current stream and wraps around: if a channel's
+  first stream was unavailable at connect time, the rotation can reach the card before the
+  streams sitting before the current one. Only with M3U profiles at capacity, one retry.
 - On Windows the `posix_only` and `proc_fs_only` tests are skipped and `mypy .` reports
   `os.WNOHANG`; `mypy --platform linux .` is clean. The CI on Linux is the reference.
 
@@ -156,6 +171,16 @@ the card; with the shared card of 0.2.1 there were two. Since 0.4.0 the other on
 even try while the provider is full, so there is no `No profiles available with connection
 capacity` in the log (25 October 2026: B back 5 s after A left, C on the card). Afterwards delete the channels, the account, its group, and the uploaded file in
 `/data/uploads/m3us/`, which deleting the account leaves behind.
+
+## The README cards
+
+`docs/images/card-*.png` come from `scripts/readme_cards.py`, run inside the Dispatcharr
+container with the installed plugin on the path (`docker exec -i -e
+PYTHONPATH=/data/plugins/could_not_dispatch <container> /dispatcharrpy/bin/python - <out dir> <
+scripts/readme_cards.py`), so the heading uses the container's Sans and the lines the plugin's
+own `caption_filter`, with invented channel names. The README links them at the tag on
+`raw.githubusercontent.com`, since the registry copies the README without `docs/`; they are not
+in the zip.
 
 ## Release
 
