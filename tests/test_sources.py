@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from could_not_dispatch.sources import Source, answers, first_worth_trying
+from could_not_dispatch.sources import Source, Verdict, answers, first_worth_trying
 
 TS_PACKET = b"\x47" + bytes(187)
 
@@ -100,33 +100,83 @@ def checker(answering: set[str]) -> tuple[list[str], object]:
     return checked, check
 
 
+
 def test_the_first_answering_stream_is_worth_trying():
     checked, check = checker({"http://p/2.ts"})
     sources = [Source(1, "http://p/1.ts"), Source(2, "http://p/2.ts"), Source(3, "http://p/3.ts")]
-    assert first_worth_trying(sources, 8, check) == 2
+    assert first_worth_trying(sources, 8, check) == Verdict(2)
     assert checked == ["http://p/1.ts", "http://p/2.ts"]
 
 
 def test_with_no_stream_answering_none_is_worth_trying():
     _, check = checker(set())
-    assert first_worth_trying([Source(1, "http://p/1.ts")], 8, check) is None
+    assert first_worth_trying([Source(1, "http://p/1.ts")], 8, check) == Verdict(None)
 
 
 def test_a_stream_dispatcharr_cannot_build_a_url_for_is_skipped():
     checked, check = checker({"http://p/2.ts"})
-    assert first_worth_trying([Source(1, None), Source(2, "http://p/2.ts")], 8, check) == 2
+    assert first_worth_trying([Source(1, None), Source(2, "http://p/2.ts")], 8, check) == Verdict(2)
     assert checked == ["http://p/2.ts"]
 
 
-def test_a_stream_on_a_full_account_is_left_to_dispatcharr_unchecked():
+def test_a_stream_on_a_full_account_is_skipped_for_the_next_one():
+    checked, check = checker({"http://p/2.ts"})
+    sources = [Source(1, None, full=True), Source(2, "http://p/2.ts")]
+    assert first_worth_trying(sources, 8, check) == Verdict(2)
+    assert checked == ["http://p/2.ts"]
+
+
+def test_with_the_rest_silent_a_full_account_means_waiting_for_room():
     checked, check = checker(set())
-    assert first_worth_trying([Source(1, None, full=True)], 8, check) == 1
+    sources = [Source(1, "http://p/1.ts"), Source(2, None, full=True)]
+    assert first_worth_trying(sources, 8, check) == Verdict(None, full=True)
+    assert checked == ["http://p/1.ts"]
+
+
+def test_a_slot_taken_before_the_check_counts_as_full_and_is_not_opened():
+    checked, check = checker({"http://p/1.ts"})
+    verdict = first_worth_trying(
+        [Source(1, "http://p/1.ts", profile_id=7)], 8, check, reserve=lambda source: False
+    )
+    assert verdict == Verdict(None, full=True)
     assert checked == []
+
+
+def test_the_slot_is_held_while_the_stream_is_open_and_released_after():
+    events: list[str] = []
+
+    def check(url: str, user_agent: str, timeout: float) -> bool:
+        events.append("check")
+        return False
+
+    sources = [Source(1, "http://p/1.ts", profile_id=7), Source(2, "http://p/2.ts", profile_id=7)]
+    first_worth_trying(
+        sources,
+        8,
+        check,
+        reserve=lambda source: events.append(f"reserve {source.stream_id}") is None,
+        release=lambda source: events.append(f"release {source.stream_id}"),
+    )
+    assert events == ["reserve 1", "check", "release 1", "reserve 2", "check", "release 2"]
+
+
+def test_the_slot_is_released_even_when_the_check_fails():
+    released: list[int] = []
+
+    def check(url: str, user_agent: str, timeout: float) -> bool:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        first_worth_trying(
+            [Source(1, "http://p/1.ts")], 8, check,
+            release=lambda source: released.append(source.stream_id),
+        )
+    assert released == [1]
 
 
 def test_a_stream_that_is_not_http_is_left_to_dispatcharr_unchecked():
     checked, check = checker(set())
-    assert first_worth_trying([Source(1, "udp://239.0.0.1:1234")], 8, check) == 1
+    assert first_worth_trying([Source(1, "udp://239.0.0.1:1234")], 8, check) == Verdict(1)
     assert checked == []
 
 
@@ -134,5 +184,6 @@ def test_streams_past_the_budget_are_left_to_dispatcharr_unchecked():
     moments = iter([0.0, 0.0, 9.0, 18.0])
     checked, check = checker(set())
     sources = [Source(stream, f"http://p/{stream}.ts") for stream in (1, 2, 3)]
-    assert first_worth_trying(sources, 8, check, clock=lambda: next(moments), budget=25) == 3
+    verdict = first_worth_trying(sources, 8, check, clock=lambda: next(moments), budget=25)
+    assert verdict == Verdict(3)
     assert checked == ["http://p/1.ts", "http://p/2.ts"]

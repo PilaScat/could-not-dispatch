@@ -21,6 +21,7 @@ from could_not_dispatch.recovery import (
     is_card_url,
 )
 from could_not_dispatch.server import Broadcaster, build_recovery, slate_url
+from could_not_dispatch.sources import Verdict
 
 SLATE_URL = "http://127.0.0.1:9721/slate.ts"
 WEB3 = "uuid-web3"
@@ -51,6 +52,7 @@ class FakeApi:
         self.dead: set[int] = set()
         self.checks: list[list[int]] = []
         self.check_fails = False
+        self.no_room = False
 
     def put_on_slate(self, uuid: str, clients: int = 1) -> None:
         self.slated[uuid] = SlatedChannel(
@@ -90,11 +92,13 @@ class FakeApi:
         self.changes.append((uuid, stream_id))
         self.take_off_slate(uuid)
 
-    def first_worth_trying(self, streams: list[int]) -> int | None:
+    def check_streams(self, streams: list[int]) -> Verdict:
         self.checks.append(list(streams))
         if self.check_fails:
             raise ApiError("POST /api/plugins/plugins/could_not_dispatch/run/ returned 500")
-        return next((stream for stream in streams if stream not in self.dead), None)
+        if self.no_room:
+            return Verdict(None, full=True)
+        return Verdict(next((stream for stream in streams if stream not in self.dead), None))
 
 
 def build(
@@ -582,6 +586,28 @@ def test_with_no_stream_answering_the_channel_stays_on_the_card_until_the_next_t
     assert api.changes == [(WEB3, 2262)]
 
 
+def test_with_every_stream_on_a_full_account_nothing_is_sent_until_a_connection_frees_up():
+    recovery, api, lines = build()
+    api.put_on_slate(WEB3)
+    run(recovery, 0, 20)
+    api.busy = 3
+    api.no_room = True
+    recovery.tick(30)
+    assert api.checks == [[2262, 2263]]
+    assert api.changes == []
+    assert recovery.interval == 2.0
+    run(recovery, 32, 60, step=2)
+    assert len(api.checks) == 1
+    api.busy = 2
+    recovery.tick(62)
+    assert len(api.checks) == 2
+    assert api.changes == []
+    api.no_room = False
+    recovery.tick(64)
+    assert api.changes == [(WEB3, 2262)]
+    assert sum("waits for a free connection" in line for line in lines) == 1
+
+
 def test_a_return_as_a_connection_frees_up_is_not_checked():
     recovery, api, _ = build()
     api.busy = 3
@@ -612,7 +638,7 @@ def test_checking_the_streams_runs_the_plugin_action(routed):
         }
     )
     api = Dispatcharr("http://dispatcharr", "secret", "cnd")
-    assert api.first_worth_trying([2262, 2263]) == 2263
+    assert api.check_streams([2262, 2263]) == Verdict(2263)
     request = fake.requests[0]
     assert request.get_method() == "POST"
     assert json.loads(request.data) == {
@@ -628,7 +654,19 @@ def test_a_check_with_no_stream_answering_reads_as_none(routed):
             }
         }
     )
-    assert Dispatcharr("http://dispatcharr", "key").first_worth_trying([2262]) is None
+    assert Dispatcharr("http://dispatcharr", "key").check_streams([2262]) == Verdict(None)
+
+
+def test_a_check_that_found_no_free_connection_says_so(routed):
+    routed(
+        {
+            "/api/plugins/plugins/could_not_dispatch/run/": {
+                "success": True, "result": {"status": "ok", "stream_id": None, "full": True},
+            }
+        }
+    )
+    verdict = Dispatcharr("http://dispatcharr", "key").check_streams([2262])
+    assert verdict == Verdict(None, full=True)
 
 
 def test_a_check_the_plugin_refuses_is_an_api_error(routed):
@@ -641,7 +679,7 @@ def test_a_check_the_plugin_refuses_is_an_api_error(routed):
         }
     )
     with pytest.raises(ApiError, match="Unknown action"):
-        Dispatcharr("http://dispatcharr", "key").first_worth_trying([2262])
+        Dispatcharr("http://dispatcharr", "key").check_streams([2262])
 
 
 def test_the_server_sends_channels_back_only_with_a_key():

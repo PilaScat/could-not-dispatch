@@ -26,6 +26,7 @@ from .constants import (
     SOURCE_CHECK_ACTION,
     SOURCE_CHECK_BUDGET_SECONDS,
 )
+from .sources import Verdict
 
 ERROR_BODY_CHARS = 200
 CAPACITY_MARKER = "capacity"
@@ -122,7 +123,7 @@ class ChannelApi(Protocol):
 
     def change_stream(self, uuid: str, stream_id: int) -> None: ...
 
-    def first_worth_trying(self, streams: Sequence[int]) -> int | None: ...
+    def check_streams(self, streams: Sequence[int]) -> Verdict: ...
 
 
 class Dispatcharr:
@@ -195,7 +196,7 @@ class Dispatcharr:
             f"/proxy/ts/change_stream/{uuid}", method="POST", body={"stream_id": stream_id}
         )
 
-    def first_worth_trying(self, streams: Sequence[int]) -> int | None:
+    def check_streams(self, streams: Sequence[int]) -> Verdict:
         path = f"/api/plugins/plugins/{self.plugin_key}/run/"
         payload = self._request(
             path,
@@ -207,7 +208,7 @@ class Dispatcharr:
         if not isinstance(result, dict) or result.get("status") != "ok":
             message = result.get("message") if isinstance(result, dict) else payload
             raise ApiError(f"POST {path} did not check the streams: {message}")
-        return _as_int(result.get("stream_id")) or None
+        return Verdict(_as_int(result.get("stream_id")) or None, full=result.get("full") is True)
 
     def current_programs(self, uuids: Sequence[str]) -> dict[str, Program]:
         payload = self._request(
@@ -285,6 +286,7 @@ class Episode:
     crowded: bool = False
     sent_crowded_at: float | None = None
     sent_at: float | None = None
+    awaiting_room: bool = False
 
 
 @dataclass(frozen=True)
@@ -335,7 +337,7 @@ class Recovery:
 
     @property
     def interval(self) -> float:
-        if any(episode.crowded for episode in self._episodes.values()):
+        if any(e.crowded or e.awaiting_room for e in self._episodes.values()):
             return self._fast_poll_seconds
         return self._poll_seconds
 
@@ -450,6 +452,10 @@ class Recovery:
             if self._send_back(channel, episode, now, counted=False) and account in room:
                 room[account] -= 1
             return
+        if episode.awaiting_room:
+            if self._has_room(channel, room):
+                self._send_back(channel, episode, now, counted=True)
+            return
         if now >= episode.due_at:
             self._send_back(channel, episode, now, counted=True)
 
@@ -465,7 +471,17 @@ class Recovery:
             self._log(f"{channel.name} has no stream besides the fallback")
             return False
         if counted:
-            target = self._worth_trying(channel, target)
+            verdict = self._verdict(channel, target)
+            if verdict.full:
+                if not episode.awaiting_room:
+                    self._log(
+                        f"{channel.name} waits for a free connection before its streams "
+                        f"are checked"
+                    )
+                episode.awaiting_room = True
+                return False
+            episode.awaiting_room = False
+            target = verdict.stream_id
         if target is None:
             episode.tries += 1
             episode.due_at = now + self._wait(episode.tries)
@@ -499,19 +515,25 @@ class Recovery:
         )
         return True
 
-    def _worth_trying(self, channel: SlatedChannel, first: int) -> int | None:
-        slates = self._catalogue.slates
-        chain = self._catalogue.chains.get(channel.uuid, [])
-        streams = [s for s in chain if s != channel.stream_id and s not in slates] or [first]
+    def _verdict(self, channel: SlatedChannel, first: int) -> Verdict:
         try:
-            target = self._api.first_worth_trying(streams)
+            verdict = self._api.check_streams(self._sources(channel) or [first])
         except ApiError as error:
             if not self._check_failing:
                 self._log(f"could not check the streams, sending channels back unchecked: {error}")
             self._check_failing = True
-            return first
+            return Verdict(first)
         self._check_failing = False
-        return target
+        return verdict
+
+    def _sources(self, channel: SlatedChannel) -> list[int]:
+        slates = self._catalogue.slates
+        chain = self._catalogue.chains.get(channel.uuid, [])
+        return [stream for stream in chain if stream != channel.stream_id and stream not in slates]
+
+    def _has_room(self, channel: SlatedChannel, room: dict[int, int]) -> bool:
+        accounts = (self._account_of(stream) for stream in self._sources(channel))
+        return any(account is None or room.get(account, 1) > 0 for account in accounts)
 
     def _refresh(self, now: float, unknown: bool) -> None:
         age = None if self._catalogue_at is None else now - self._catalogue_at

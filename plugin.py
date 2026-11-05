@@ -309,9 +309,8 @@ class Plugin:
     def _check_sources(self, context: dict) -> dict:
         requested = (context.get("params") or {}).get("streams")
         ids = [_as_int(value, 0) for value in requested] if isinstance(requested, list) else []
-        resolved = sources.resolve([stream for stream in ids if stream > 0])
-        worth = sources.first_worth_trying(resolved, sources.startup_timeout())
-        return {"status": "ok", "stream_id": worth}
+        verdict = sources.check([stream for stream in ids if stream > 0])
+        return {"status": "ok", "stream_id": verdict.stream_id, "full": verdict.full}
 
     def _status(self, context: dict) -> dict:
         settings = dict(context.get("settings") or {})

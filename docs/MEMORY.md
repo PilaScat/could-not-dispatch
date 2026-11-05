@@ -27,11 +27,18 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   the user agent are known: it uses `_resolve_live_stream_url`, private, so if Dispatcharr
   renames it the action fails and channels go back unchecked, logged once. Streams are opened
   in chain order, on the first profile with room, and closed at the first bytes; the channel
-  goes to the first that answers. A stream on a full account, or not over HTTP, is left to
-  Dispatcharr unchecked, and so is one past a 30 s budget, since the recovery loop waits for
-  the answer. The check is outside Dispatcharr's connection count: a provider that still
-  counts the closed connection could refuse the switch right after. A return as a connection
-  frees up is not checked: its streams did not fail.
+  goes to the first that answers. While open, a stream holds a slot taken with Dispatcharr's
+  `reserve_profile_slot` and given back with `release_profile_slot`, so nobody else takes the
+  last connection meanwhile; a profile with `max_streams` 0 is neither reserved nor released,
+  since Dispatcharr counts nothing on it. A worker killed during a check leaves its slot taken.
+  A stream on a full account, or whose slot is gone by the time of the reservation, is skipped;
+  if nothing else answers the channel sends nothing and counts no try, but waits, polled every
+  2 s, until one of its accounts has room, and is checked then (chosen by the operator on 5
+  November 2026). A stream not over HTTP is left to Dispatcharr unchecked, and so is one past a
+  30 s budget, since the recovery loop waits for the answer. A provider that still counts the
+  closed connection could refuse the switch right after. A return as a connection frees up for
+  a channel that reached the card with the provider full is not checked: its streams did not
+  fail.
 - **A second card for a full provider** (0.6.0, issue #1, chosen by the operator on 24 October
   2026: two cards, not the three asked for). Each fallback stream points at
   `slate.ts?channel=<uuid>`, so the server knows the channel at connect time and serves the

@@ -155,11 +155,13 @@ fallback by itself: a channel stays on the card for as long as a client holds it
 after the provider is back. Without a key that stays true. With one, the fallback asks
 Dispatcharr every ten seconds which channels are playing it and how many connections each
 M3U profile is using, and after 30 seconds on it switches a channel to the first of its
-streams that answers. Before the switch the plugin opens each stream in order, on a profile
-with a free connection and for at most Dispatcharr's **Stream Startup Timeout**, and closes
-it as soon as data arrives, so a try on a dead source does not interrupt the viewer. If none
-answers, the channel stays on the card and the next try waits longer: 1, 2, then 5 minutes,
-and every 5 minutes after that. The wait starts over once the channel has stayed off the card
+streams that answers. Before the switch the plugin opens each stream in order, for at most
+Dispatcharr's **Stream Startup Timeout**, and closes it as soon as data arrives, so a try on a
+dead source does not interrupt the viewer. The check holds one of the provider's connections
+while it runs, counted like any other, and skips a stream whose account has none free. If
+every stream it could not open was on a full account, the channel waits on the card until a
+connection frees up and is checked then. If none answers, the channel stays on the card and
+the next try waits longer: 1, 2, then 5 minutes, and every 5 minutes after that. The wait starts over once the channel has stayed off the card
 for 15 minutes.
 
 **Jellyfin can stall after a switch.** With the `FFmpeg` stream profile every switch, to the
