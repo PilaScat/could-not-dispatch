@@ -167,7 +167,7 @@ for 15 minutes.
 **Jellyfin can stall after a switch.** With the `FFmpeg` stream profile every switch, to the
 card or back from it, starts the timestamps again near zero, and Jellyfin's live remux stops
 producing segments until they catch up
-([Dispatcharr#1945](https://github.com/Dispatcharr/Dispatcharr/issues/1945)). A
+([Dispatcharr#1946](https://github.com/Dispatcharr/Dispatcharr/issues/1946)). A
 [Reservoarr](https://github.com/PilaScat/reservoarr) profile with
 `RESV_TS_CHANNEL={channelId}` keeps them going forwards: in a test with two tries in 130
 seconds, 49 segments against 13 with `FFmpeg`.

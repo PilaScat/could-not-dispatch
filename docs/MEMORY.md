@@ -136,7 +136,7 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   segments on `FFmpeg` and 19 on `Proxy`, against 44-46 with no try and 49 on reservoarr, whose
   `-output_ts_offset` only ever jumps forwards, set per channel with `RESV_TS_CHANNEL={channelId}`.
   Each silent source also leaves the viewer 9.5 s without data, a refusing one about 1.5 s.
-  Image and video behave alike. Reported upstream as Dispatcharr#1945.
+  Image and video behave alike. Reported upstream as Dispatcharr#1946.
 - On Windows the `posix_only` and `proc_fs_only` tests are skipped and `mypy .` reports
   `os.WNOHANG`; `mypy --platform linux .` is clean. The CI on Linux is the reference.
 
