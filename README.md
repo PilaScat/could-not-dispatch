@@ -154,10 +154,21 @@ stream, so Dispatcharr considers the channel up. To spot real outages, watch the
 fallback by itself: a channel stays on the card for as long as a client holds it, even
 after the provider is back. Without a key that stays true. With one, the fallback asks
 Dispatcharr every ten seconds which channels are playing it and how many connections each
-M3U profile is using, and switches a channel still on it after 30 seconds to its first
-stream. If that stream is still down, the failover walks the chain and lands on the card
-again, and the next try waits longer: 1, 2, then 5 minutes, and every 5 minutes after that.
-The wait starts over once the channel has stayed off the card for 15 minutes.
+M3U profile is using, and after 30 seconds on it switches a channel to the first of its
+streams that answers. Before the switch the plugin opens each stream in order, on a profile
+with a free connection and for at most Dispatcharr's **Stream Startup Timeout**, and closes
+it as soon as data arrives, so a try on a dead source does not interrupt the viewer. If none
+answers, the channel stays on the card and the next try waits longer: 1, 2, then 5 minutes,
+and every 5 minutes after that. The wait starts over once the channel has stayed off the card
+for 15 minutes.
+
+**Jellyfin can stall after a switch.** With the `FFmpeg` stream profile every switch, to the
+card or back from it, starts the timestamps again near zero, and Jellyfin's live remux stops
+producing segments until they catch up
+([Dispatcharr#1945](https://github.com/Dispatcharr/Dispatcharr/issues/1945)). A
+[Reservoarr](https://github.com/PilaScat/reservoarr) profile with
+`RESV_TS_CHANNEL={channelId}` keeps them going forwards: in a test with two tries in 130
+seconds, 49 segments against 13 with `FFmpeg`.
 
 A channel that reaches the card while the provider of its first stream is full, or was full
 in the 20 seconds before, is there for lack of a connection, not because its streams failed:
