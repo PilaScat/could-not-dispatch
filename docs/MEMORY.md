@@ -63,8 +63,8 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
 - **The channels in use are written by `drawtext` from a file** (0.7.0, off by default,
   asked by the operator on 28 October 2026). The recovery loop already reads
   `/proxy/ts/status` every 2-10 s, so after each check it writes the channels on the
-  profiles of accounts full in the last 20 s to `.runtime/in-use.txt`, through a `.part` and
-  `os.replace`, as `drawtext` with `reload=1` needs; the encoder never restarts. The file
+  profiles of accounts full in the last 20 s to `in-use.txt` in the data folder, through a
+  `.part` and `os.replace`, as `drawtext` with `reload=1` needs; the encoder never restarts. The file
   carries only names, no heading: the picture says what the list is, in its own language.
   Names come from the catalogue's `effective_name`, never from `channel_name` of the status,
   which is at times the stream's name. The programme comes from
@@ -116,11 +116,18 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   kbit/s against 56.1, 65.5 against 61.8 at 4000. No `zerolatency` either: it drops the
   lookahead and the picture pulses, a spread of 8.2 dB across frames against 2.6 and a worst
   frame of 57.9 against 63.1. With the lookahead 2000 beats 4000 without it, hence the default.
-- **State lives in `.runtime/state.json`**, never in the plugin settings: saving the settings
-  replaces the whole object. Whether the fallback is applied is also read from the channels: one
-  carrying the stream counts, so `restart` and `reapply` still work when the state file is lost
-  (an update replaces the plugin folder, issue #5). `restart` asks only after the uwsgi and
-  heartbeat checks, so the database is read at most once a minute per worker.
+- **State lives in a data folder outside the plugin folder** (0.7.4, issue #5), never in the
+  plugin settings: saving the settings replaces the whole object. An update replaces the plugin
+  folder, `.runtime/` included. The folder is `context["data_dir"]` when Dispatcharr gives it
+  (0.34.0, `_data/<slug>` from the hub, `_data/<key>` by hand), else
+  `/data/plugins/_data/could-not-dispatch`, the hub's path. It holds `state.json`,
+  `fallback.log`, `in-use.txt` and the `media/` cache. `state.migrate` moves an old `.runtime/`
+  (or the fallback folder) there on the first `run` or `stop`, only into a missing or empty
+  folder; the same function is copied in Gluetun Rotate and Underfed. Nothing removes it on
+  delete: on 0.34.0 Dispatcharr asks the user. Whether the fallback is applied is also read from
+  the channels: one carrying the stream counts, so the first update to 0.7.4, which still loses
+  `.runtime/`, brings the card back. `restart` asks only after the uwsgi and heartbeat checks,
+  so the database is read at most once a minute per worker.
 
 ## Traps
 
@@ -130,8 +137,8 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   `tests/test_plugin_contract.py` keeps that list.
 - From Dispatcharr 0.31.0 a profile URL transform that does not match fails closed. The
   `custom` account's default profile must keep `^(.*)$` → `$1`, or the slate cannot start.
-- Importing a zip with `overwrite=true` replaces the plugin folder: copy `no-more-streams.png`
-  (or whatever `media_source` points to) and `.runtime/` out first and back after. The new code
+- Importing a zip with `overwrite=true` replaces the plugin folder: a `media_source` kept inside
+  it is lost, the data folder is not. The new code
   only runs after `POST /api/plugins/plugins/reload/`, and the reload stops every plugin's
   processes, so press Apply afterwards.
 - `/api/channels/channels/` leaves out channels hidden from the output unless asked with

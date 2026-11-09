@@ -27,6 +27,7 @@ try:
         LISTEN_HOST,
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
+        PLUGIN_SLUG,
         PLUGIN_VERSION,
         SOURCE_CHECK_ACTION,
         STARTUP_PROBE_SECONDS,
@@ -51,6 +52,7 @@ except ImportError:
         LISTEN_HOST,
         PLUGIN_DESCRIPTION,
         PLUGIN_NAME,
+        PLUGIN_SLUG,
         PLUGIN_VERSION,
         SOURCE_CHECK_ACTION,
         STARTUP_PROBE_SECONDS,
@@ -63,11 +65,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-RUNTIME_DIR = BASE_DIR / ".runtime"
-MEDIA_CACHE_DIR = RUNTIME_DIR / "media"
-LOG_PATH = RUNTIME_DIR / "fallback.log"
-
-STATE_PATH = RUNTIME_DIR / "state.json"
+RUNTIME_DIR = BASE_DIR.parent / "_data" / PLUGIN_SLUG
+LEGACY_RUNTIME_DIR = BASE_DIR / ".runtime"
+STATE_FILE = "state.json"
+LOG_FILE = "fallback.log"
+MEDIA_CACHE_FOLDER = "media"
 
 HEARTBEAT_INTERVAL_SECONDS = 60.0
 DETACHING_REASONS = frozenset({"disable", "delete"})
@@ -129,6 +131,24 @@ class Plugin:
 
     def __init__(self) -> None:
         self._key = BASE_DIR.name.replace(" ", "_").lower()
+        self._runtime = RUNTIME_DIR
+
+    @property
+    def _state_path(self) -> Path:
+        return self._runtime / STATE_FILE
+
+    @property
+    def _log_path(self) -> Path:
+        return self._runtime / LOG_FILE
+
+    @property
+    def _media_cache(self) -> Path:
+        return self._runtime / MEDIA_CACHE_FOLDER
+
+    def _locate(self, context: dict) -> None:
+        given = str(context.get("data_dir") or "").strip()
+        self._runtime = Path(given) if given else RUNTIME_DIR
+        state_module.migrate([RUNTIME_DIR, LEGACY_RUNTIME_DIR], self._runtime)
 
     def run(self, action: str, params: dict, context: dict) -> dict:
         handlers = {
@@ -142,6 +162,7 @@ class Plugin:
         handler = handlers.get((action or "").strip().lower())
         if handler is None:
             return {"status": "error", "message": f"Unknown action '{action}'."}
+        self._locate(dict(context or {}))
         try:
             return handler({**(context or {}), "params": dict(params or {})})
         except media_module.MediaError as exc:
@@ -152,6 +173,7 @@ class Plugin:
 
     def stop(self, context: dict | None = None) -> dict:
         context = dict(context or {})
+        self._locate(context)
         settings = dict(context.get("settings") or {})
         reason = str(context.get("reason") or "")
 
@@ -179,7 +201,7 @@ class Plugin:
         settings = dict(context.get("settings") or {})
         port = _as_int(settings.get("port"), DEFAULT_PORT)
 
-        resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
+        resolved = media_module.resolve(settings.get("media_source", ""), self._media_cache)
         media = media_module.inspect(resolved.path)
         full = self._full_media(settings)
         caption = self._caption(settings)
@@ -294,7 +316,7 @@ class Plugin:
             return {"status": "ok", "message": "Fallback is running."}
 
         port = _as_int(settings.get("port"), DEFAULT_PORT)
-        resolved = media_module.resolve(settings.get("media_source", ""), MEDIA_CACHE_DIR)
+        resolved = media_module.resolve(settings.get("media_source", ""), self._media_cache)
         media = media_module.inspect(resolved.path)
         self._start_process(
             media,
@@ -351,7 +373,7 @@ class Plugin:
         detached = targeting.detach(STREAM_NAME)
         targeting.delete_streams(STREAM_NAME)
 
-        state_module.save(STATE_PATH, {})
+        state_module.save(self._state_path, {})
         return {
             "status": "ok",
             "message": f"Fallback removed from {detached} channel(s) and stopped.",
@@ -447,7 +469,7 @@ class Plugin:
             BASE_DIR,
             arguments,
             token,
-            LOG_PATH,
+            self._log_path,
             extra_env={API_KEY_ENV: api_key} if api_key else None,
         )
         self._remember({"pid": pid, "token": token, "started_at": time.time()})
@@ -457,7 +479,7 @@ class Plugin:
             process.terminate_strays(port)
             self._remember({}, clear=["pid", "token"])
             raise RuntimeError(
-                f"The fallback did not answer on port {port}. See {LOG_PATH} for details."
+                f"The fallback did not answer on port {port}. See {self._log_path} for details."
             )
 
     def _wait_for_port(self, port: int) -> bool:
@@ -531,7 +553,7 @@ class Plugin:
         source = str(settings.get("media_source_full") or "").strip()
         if not source:
             return None
-        resolved = media_module.resolve(source, MEDIA_CACHE_DIR)
+        resolved = media_module.resolve(source, self._media_cache)
         return media_module.inspect(resolved.path)
 
     def _caption(self, settings: dict) -> Caption | None:
@@ -544,7 +566,7 @@ class Plugin:
             if font.suffix.lower() not in IN_USE_FONT_SUFFIXES:
                 raise media_module.MediaError(f"'{source}' is not a .ttf, .otf or .ttc font.")
         return Caption(
-            text_file=RUNTIME_DIR / IN_USE_FILE_NAME,
+            text_file=self._runtime / IN_USE_FILE_NAME,
             font=font,
             top_percent=_as_percent(settings.get("in_use_top"), IN_USE_TOP_PERCENT),
         )
@@ -553,7 +575,7 @@ class Plugin:
         return slate_url(LISTEN_HOST, port, STREAM_PATH)
 
     def _state(self) -> dict:
-        return state_module.load(STATE_PATH)
+        return state_module.load(self._state_path)
 
     def _remember(self, updates: dict, clear: list[str] | None = None) -> dict:
-        return state_module.remember(STATE_PATH, updates, clear or [])
+        return state_module.remember(self._state_path, updates, clear or [])
