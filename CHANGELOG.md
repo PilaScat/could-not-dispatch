@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.4 — 2026-11-09
+
+- **The card comes back after an update** (PilaScat/could-not-dispatch#5). An update from the
+  Plugin Hub replaces the plugin folder, and with it the file that recorded that the fallback
+  was applied. The card then never started again with a channel, and channels created later
+  were not covered, while the channels still carried its stream: viewers got an error where
+  the card should be. The plugin now also counts the fallback as applied when a channel carries
+  its stream, so the card starts again with the next channel, this update included.
+- **The plugin's state lives outside the plugin folder**, in
+  `/data/plugins/_data/could-not-dispatch`, or in the folder Dispatcharr gives plugins from
+  0.34.0. Later updates keep it, with the log, a card downloaded from a link and the channels in
+  use. An older `.runtime` folder is moved there by itself.
+
 ## 0.7.3 — 2026-11-05
 
 - **A channel goes back from the card only to a stream that answers**

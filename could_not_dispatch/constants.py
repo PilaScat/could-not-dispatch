@@ -4,7 +4,7 @@ from pathlib import Path
 
 PLUGIN_NAME = "Could Not Dispatch"
 PLUGIN_SLUG = "could-not-dispatch"
-PLUGIN_VERSION = "0.7.3"
+PLUGIN_VERSION = "0.7.4"
 PLUGIN_DESCRIPTION = (
     "Plays a looping image or video when every stream on a channel has failed, "
     "so viewers see a message instead of an error. It can show a second card when the "
