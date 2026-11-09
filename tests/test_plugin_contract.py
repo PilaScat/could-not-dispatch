@@ -351,6 +351,104 @@ def test_after_a_restart_the_same_reason_is_logged_again(
     assert restarting == [9721]
 
 
+def test_starting_the_fallback_records_the_version_that_started_it(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    _started_arguments(loaded_module, monkeypatch, None)
+    state = loaded_module.state_module.load(isolated_runtime / "state.json")
+    assert state["version"] == loaded_module.PLUGIN_VERSION
+    assert state["version_token"] == state["token"]
+
+
+@pytest.fixture
+def replacing(loaded_module, restarting, isolated_runtime, monkeypatch):
+    stopped: list[tuple] = []
+    monkeypatch.setattr(loaded_module.process, "is_running", lambda *_a: True)
+    monkeypatch.setattr(
+        loaded_module.process, "terminate", lambda *args, **_k: stopped.append(args) or True
+    )
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda _name: 148)
+
+    def remember(values: dict) -> None:
+        loaded_module.state_module.save(isolated_runtime / "state.json", values)
+
+    return remember, stopped
+
+
+@pytest.mark.parametrize(
+    ("recorded", "replaced"),
+    [
+        ({}, True),
+        ({"version": "0.1.0", "version_token": "t"}, True),
+        ({"version": "current", "version_token": "another"}, True),
+        ({"version": "current", "version_token": "t"}, False),
+        ({"version": "99.0.0", "version_token": "t"}, False),
+    ],
+)
+def test_a_channel_start_replaces_a_fallback_started_by_an_older_version(
+    loaded_module, replacing, restarting, recorded, replaced
+):
+    remember, stopped = replacing
+    if recorded.get("version") == "current":
+        recorded = {**recorded, "version": loaded_module.PLUGIN_VERSION}
+    remember({"applied": True, "pid": 7, "token": "t", **recorded})
+    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
+    assert result["message"] == ("Fallback restarted." if replaced else "Fallback is running.")
+    assert stopped == ([(7, "t")] if replaced else [])
+    assert restarting == ([9721] if replaced else [])
+
+
+def test_an_older_fallback_stays_when_the_card_cannot_be_read(
+    loaded_module, replacing, restarting, monkeypatch
+):
+    remember, stopped = replacing
+    remember({"applied": True, "pid": 7, "token": "t"})
+
+    def resolve(*_args):
+        raise loaded_module.media_module.MediaError("gone")
+
+    monkeypatch.setattr(loaded_module, "_last_warning", "")
+    monkeypatch.setattr(loaded_module.media_module, "resolve", resolve)
+    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
+    assert result == {"status": "error", "message": "gone"}
+    assert stopped == []
+    assert restarting == []
+
+
+def test_a_fallback_another_worker_already_replaced_is_left_alone(
+    loaded_module, replacing, restarting, monkeypatch
+):
+    _remember, stopped = replacing
+    older = {"applied": True, "pid": 7, "token": "t"}
+    current = {**older, "pid": 8, "token": "u", "version_token": "u"}
+    current["version"] = loaded_module.PLUGIN_VERSION
+    states = iter([older, current])
+    monkeypatch.setattr(loaded_module.Plugin, "_state", lambda self: next(states))
+    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
+    assert result["message"] == "Fallback is running."
+    assert stopped == []
+    assert restarting == []
+
+
+@pytest.mark.parametrize(("version", "kept"), [("0.1.0", False), ("current", True)])
+def test_apply_with_the_same_settings_replaces_only_an_older_fallback(
+    loaded_module, replacing, monkeypatch, version, kept
+):
+    remember, stopped = replacing
+    version = loaded_module.PLUGIN_VERSION if version == "current" else version
+    remember({"pid": 7, "token": "t", "signature": "s", "version": version, "version_token": "t"})
+    started: list[bool] = []
+    monkeypatch.setattr(
+        loaded_module.Plugin, "_start_process", lambda self, *a: started.append(True)
+    )
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    options = loaded_module.EncodeOptions.normalized()
+    restarted = loaded_module.Plugin()._ensure_process("s", card, options, 9721, "")
+    assert restarted is not kept
+    assert stopped == ([] if kept else [(7, "t")])
+    assert started == ([] if kept else [True])
+
+
 @pytest.mark.parametrize(("carried", "covered"), [(148, [[7, 8]]), (0, [])])
 def test_an_m3u_refresh_reads_from_the_channels_whether_the_fallback_is_applied(
     loaded_module, isolated_runtime, monkeypatch, carried, covered

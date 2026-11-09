@@ -330,7 +330,7 @@ class Plugin:
         if not self._applied(state):
             return {"status": "ok", "message": "Nothing to do: the fallback is not applied."}
 
-        if process.is_running(state.get("pid"), state.get("token")):
+        if self._current(state):
             return {"status": "ok", "message": "Fallback is running."}
 
         port = _as_int(settings.get("port"), DEFAULT_PORT)
@@ -343,6 +343,15 @@ class Plugin:
         except media_module.MediaError as exc:
             _warn_once(f"Could Not Dispatch could not restart the fallback: {exc}")
             raise
+        latest = self._state()
+        if self._current(latest):
+            return {"status": "ok", "message": "Fallback is running."}
+        if process.is_running(latest.get("pid"), latest.get("token")):
+            logger.info(
+                "Could Not Dispatch replaces the fallback started by %s",
+                state_module.started_version(latest) or "an older version",
+            )
+            process.terminate(latest.get("pid"), latest.get("token"))
         self._start_process(media, options, port, _api_key(settings), full, caption)
         _forget_warning()
         return {"status": "ok", "message": "Fallback restarted."}
@@ -412,11 +421,17 @@ class Plugin:
         pid = state.get("pid")
         token = state.get("token")
         if process.is_running(pid, token):
-            if state.get("signature") == signature:
+            if state.get("signature") == signature and not self._older(state):
                 return False
             process.terminate(pid, token)
         self._start_process(media, options, port, api_key, full, caption)
         return True
+
+    def _older(self, state: dict) -> bool:
+        return state_module.is_older(state_module.started_version(state), PLUGIN_VERSION)
+
+    def _current(self, state: dict) -> bool:
+        return process.is_running(state.get("pid"), state.get("token")) and not self._older(state)
 
     def _stop_fallback(self, settings: dict) -> bool:
         state = self._state()
@@ -491,7 +506,15 @@ class Plugin:
             self._log_path,
             extra_env={API_KEY_ENV: api_key} if api_key else None,
         )
-        self._remember({"pid": pid, "token": token, "started_at": time.time()})
+        self._remember(
+            {
+                "pid": pid,
+                "token": token,
+                "started_at": time.time(),
+                "version": PLUGIN_VERSION,
+                "version_token": token,
+            }
+        )
 
         if not self._wait_for_port(port):
             process.terminate(pid)

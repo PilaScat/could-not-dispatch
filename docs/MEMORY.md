@@ -16,6 +16,17 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   the card cannot be read (`MediaError`), `restart` logs a WARNING once per reason and worker,
   again after a successful start: a missing file would otherwise give a line a minute per
   worker. A `RuntimeError` stays with `run()`, logged as an error with its traceback.
+- **A fallback started by an older version is replaced** (0.7.5). An install from the hub does
+  not stop the plugin's processes, and with the state kept in the data folder `restart` used to
+  find the old one running and leave it. The start records `version` with `version_token`, the
+  token of that process: a version counts only while the token matches, since `remember` merges
+  and code that does not know the field would leave it beside a new pid. `restart` replaces a
+  process whose version is missing or older, never one that is newer, or a worker still on the
+  old code would replace it back (`run_action` does not reload a worker). It checks the card
+  first, so an unreadable file keeps the old one, then reads the state again, so a process
+  another worker just started stays; the replacement is logged at INFO. Apply with unchanged
+  settings keeps the process only if it is not older. `state.is_older` and
+  `state.started_version` are copied in Gluetun Rotate and Underfed.
 - **The fallback stays last and off excluded channels.** Apply and Cover new channels detach it
   from channels excluded since, and move it back to the end where a stream was added after it.
 - **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 30 s on the card,
