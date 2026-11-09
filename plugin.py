@@ -264,7 +264,7 @@ class Plugin:
 
     def _reapply(self, context: dict) -> dict:
         settings = dict(context.get("settings") or {})
-        if not self._state().get("applied"):
+        if not self._applied(self._state()):
             return {"status": "ok", "message": "Nothing to do: the fallback is not applied."}
         started_by_an_event = bool(dict(context.get("params") or {}).get("event"))
         if started_by_an_event and not settings.get("auto_reapply", True):
@@ -279,9 +279,6 @@ class Plugin:
 
     def _restart(self, context: dict) -> dict:
         settings = dict(context.get("settings") or {})
-        state = self._state()
-        if not state.get("applied"):
-            return {"status": "ok", "message": "Nothing to do: the fallback is not applied."}
         if not _running_inside_uwsgi():
             return {
                 "status": "ok",
@@ -289,6 +286,9 @@ class Plugin:
             }
         if not self._heartbeat_due():
             return {"status": "ok", "message": "Checked recently."}
+        state = self._state()
+        if not self._applied(state):
+            return {"status": "ok", "message": "Nothing to do: the fallback is not applied."}
 
         if process.is_running(state.get("pid"), state.get("token")):
             return {"status": "ok", "message": "Fallback is running."}
@@ -305,6 +305,9 @@ class Plugin:
             self._caption(settings),
         )
         return {"status": "ok", "message": "Fallback restarted."}
+
+    def _applied(self, state: dict) -> bool:
+        return bool(state.get("applied")) or targeting.attached_count(STREAM_NAME) > 0
 
     def _check_sources(self, context: dict) -> dict:
         requested = (context.get("params") or {}).get("streams")

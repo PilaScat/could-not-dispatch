@@ -117,7 +117,10 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   lookahead and the picture pulses, a spread of 8.2 dB across frames against 2.6 and a worst
   frame of 57.9 against 63.1. With the lookahead 2000 beats 4000 without it, hence the default.
 - **State lives in `.runtime/state.json`**, never in the plugin settings: saving the settings
-  replaces the whole object.
+  replaces the whole object. Whether the fallback is applied is also read from the channels: one
+  carrying the stream counts, so `restart` and `reapply` still work when the state file is lost
+  (an update replaces the plugin folder, issue #5). `restart` asks only after the uwsgi and
+  heartbeat checks, so the database is read at most once a minute per worker.
 
 ## Traps
 

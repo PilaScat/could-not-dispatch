@@ -69,6 +69,7 @@ def isolated_runtime(loaded_module, tmp_path, monkeypatch):
         if hasattr(loaded_module, name):
             monkeypatch.setattr(loaded_module, name, runtime / getattr(loaded_module, name).name)
     monkeypatch.setattr(loaded_module, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda *_a: 0)
     monkeypatch.setattr(loaded_module.process, "terminate_strays", lambda *_a, **_k: [])
     if hasattr(loaded_module.process, "find_servers"):
         monkeypatch.setattr(loaded_module.process, "find_servers", lambda *_a, **_k: [])
@@ -215,6 +216,82 @@ def test_an_m3u_refresh_covers_new_channels_by_default(loaded_module, covering):
     params = {"event": "m3u_refresh", "payload": {}}
     loaded_module.Plugin().run("reapply", params, {"settings": {}})
     assert covering == [[7, 8]]
+
+
+CHANNEL_START = {"event": "channel_start", "payload": {}}
+M3U_REFRESH = {"event": "m3u_refresh", "payload": {}}
+
+
+@pytest.fixture
+def restarting(loaded_module, isolated_runtime, monkeypatch):
+    started: list[int] = []
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    monkeypatch.setattr(loaded_module, "_running_inside_uwsgi", lambda: True)
+    monkeypatch.setattr(loaded_module.Plugin, "_heartbeat_due", lambda self: True)
+    monkeypatch.setattr(loaded_module.process, "is_running", lambda *_a: False)
+    monkeypatch.setattr(
+        loaded_module.media_module,
+        "resolve",
+        lambda *_a: loaded_module.media_module.Resolved(card.path, from_cache=False),
+    )
+    monkeypatch.setattr(loaded_module.media_module, "inspect", lambda _path: card)
+    monkeypatch.setattr(
+        loaded_module.Plugin, "_start_process", lambda self, *args: started.append(args[2])
+    )
+    return started
+
+
+@pytest.mark.parametrize(
+    ("carried", "message", "ports"),
+    [
+        (148, "Fallback restarted.", [9721]),
+        (0, "Nothing to do: the fallback is not applied.", []),
+    ],
+)
+def test_a_channel_start_reads_from_the_channels_whether_the_fallback_is_applied(
+    loaded_module, restarting, monkeypatch, carried, message, ports
+):
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda _name: carried)
+    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
+    assert result["message"] == message
+    assert restarting == ports
+
+
+@pytest.mark.parametrize(("carried", "covered"), [(148, [[7, 8]]), (0, [])])
+def test_an_m3u_refresh_reads_from_the_channels_whether_the_fallback_is_applied(
+    loaded_module, isolated_runtime, monkeypatch, carried, covered
+):
+    attached: list[list[int]] = []
+
+    def attach(name, url, channel_ids):
+        attached.append(list(channel_ids))
+        return loaded_module.targeting.Attachment(attached=0, separated=0, created=0)
+
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda _name: carried)
+    monkeypatch.setattr(loaded_module.targeting, "target_channel_ids", lambda *_: [7, 8])
+    monkeypatch.setattr(loaded_module.targeting, "attach", attach)
+    loaded_module.Plugin().run("reapply", M3U_REFRESH, {"settings": {}})
+    assert attached == covered
+
+
+@pytest.mark.parametrize(
+    ("inside_uwsgi", "due", "message"),
+    [
+        (False, True, "Skipped: the fallback only starts in the Dispatcharr web process."),
+        (True, False, "Checked recently."),
+    ],
+)
+def test_a_channel_start_asks_the_database_at_most_once_a_minute(
+    loaded_module, isolated_runtime, monkeypatch, inside_uwsgi, due, message
+):
+    def refuse(_name):
+        raise AssertionError("the database was asked")
+
+    monkeypatch.setattr(loaded_module, "_running_inside_uwsgi", lambda: inside_uwsgi)
+    monkeypatch.setattr(loaded_module.Plugin, "_heartbeat_due", lambda self: due)
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", refuse)
+    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
+    assert result["message"] == message
 
 
 def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
