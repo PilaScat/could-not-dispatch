@@ -77,6 +77,24 @@ DETACHING_REASONS = frozenset({"disable", "delete"})
 _heartbeat_lock = threading.Lock()
 _heartbeat_checked_at = 0.0
 
+_warning_lock = threading.Lock()
+_last_warning = ""
+
+
+def _warn_once(message: str) -> None:
+    global _last_warning
+    with _warning_lock:
+        if message == _last_warning:
+            return
+        _last_warning = message
+    logger.warning("%s", message)
+
+
+def _forget_warning() -> None:
+    global _last_warning
+    with _warning_lock:
+        _last_warning = ""
+
 
 def _read_manifest() -> dict[str, Any]:
     try:
@@ -316,16 +334,17 @@ class Plugin:
             return {"status": "ok", "message": "Fallback is running."}
 
         port = _as_int(settings.get("port"), DEFAULT_PORT)
-        resolved = media_module.resolve(settings.get("media_source", ""), self._media_cache)
-        media = media_module.inspect(resolved.path)
-        self._start_process(
-            media,
-            self._encode_options(settings, media),
-            port,
-            _api_key(settings),
-            self._full_media(settings),
-            self._caption(settings),
-        )
+        try:
+            resolved = media_module.resolve(settings.get("media_source", ""), self._media_cache)
+            media = media_module.inspect(resolved.path)
+            options = self._encode_options(settings, media)
+            full = self._full_media(settings)
+            caption = self._caption(settings)
+        except media_module.MediaError as exc:
+            _warn_once(f"Could Not Dispatch could not restart the fallback: {exc}")
+            raise
+        self._start_process(media, options, port, _api_key(settings), full, caption)
+        _forget_warning()
         return {"status": "ok", "message": "Fallback restarted."}
 
     def _applied(self, state: dict) -> bool:

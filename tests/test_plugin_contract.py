@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import sys
 import types
 from pathlib import Path
@@ -304,6 +305,50 @@ def test_a_channel_start_reads_from_the_channels_whether_the_fallback_is_applied
     result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
     assert result["message"] == message
     assert restarting == ports
+
+
+def _failing_restarts(loaded_module, monkeypatch, outcomes):
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    steps = iter(outcomes)
+
+    def resolve(*_args):
+        outcome = next(steps)
+        if outcome:
+            raise loaded_module.media_module.MediaError(outcome)
+        return loaded_module.media_module.Resolved(card.path, from_cache=False)
+
+    monkeypatch.setattr(loaded_module, "_last_warning", "")
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda _name: 148)
+    monkeypatch.setattr(loaded_module.media_module, "resolve", resolve)
+    plugin = loaded_module.Plugin()
+    return [plugin.run("restart", CHANNEL_START, {"settings": {}}) for _ in outcomes]
+
+
+def _warnings(caplog) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+
+
+def test_a_card_that_cannot_restart_is_logged_once_per_reason(
+    loaded_module, restarting, monkeypatch, caplog
+):
+    gone, unreadable = "'/data/a.png' does not exist.", "ffprobe could not read /data/a.png"
+    with caplog.at_level(logging.WARNING):
+        results = _failing_restarts(loaded_module, monkeypatch, [gone, gone, unreadable])
+    assert _warnings(caplog) == [
+        f"Could Not Dispatch could not restart the fallback: {gone}",
+        f"Could Not Dispatch could not restart the fallback: {unreadable}",
+    ]
+    assert results[0] == {"status": "error", "message": gone}
+    assert restarting == []
+
+
+def test_after_a_restart_the_same_reason_is_logged_again(
+    loaded_module, restarting, monkeypatch, caplog
+):
+    with caplog.at_level(logging.WARNING):
+        _failing_restarts(loaded_module, monkeypatch, ["gone", "", "gone"])
+    assert len(_warnings(caplog)) == 2
+    assert restarting == [9721]
 
 
 @pytest.mark.parametrize(("carried", "covered"), [(148, [[7, 8]]), (0, [])])

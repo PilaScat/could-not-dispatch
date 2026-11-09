@@ -12,7 +12,10 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   stream as a HDHomeRun tuner, so the advertised tuner count grows by one per channel.
 - **The slate is a detached process** serving `http://127.0.0.1:<port>/slate.ts`, not a view
   inside Dispatcharr. Dispatcharr has no scheduler for plugins: the `restart` action is bound
-  to `channel_start` and brings the process back, at most once a minute per uwsgi worker.
+  to `channel_start` and brings the process back, at most once a minute per uwsgi worker. When
+  the card cannot be read (`MediaError`), `restart` logs a WARNING once per reason and worker,
+  again after a successful start: a missing file would otherwise give a line a minute per
+  worker. A `RuntimeError` stays with `run()`, logged as an error with its traceback.
 - **The fallback stays last and off excluded channels.** Apply and Cover new channels detach it
   from channels excluded since, and move it back to the end where a stream was added after it.
 - **Sending a channel back** uses `POST /proxy/ts/change_stream/<uuid>` after 30 s on the card,
