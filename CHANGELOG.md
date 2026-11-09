@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.5 — 2026-11-09
+
+- **A card left running by an update is replaced.** An install from the Plugin Hub does not
+  stop the plugin's card, so after an update the old one kept running the old code until Apply
+  was pressed, and an Apply with unchanged settings kept it too. The card now records the
+  version that started it: the first channel that starts after an update, or an Apply, replaces
+  one started by an older version. A viewer on the card at that moment sees it start again.
+- **A card that cannot start again is logged.** When the image or video cannot be read, for
+  example because the file is gone, `dispatcharr.log` gets a warning with the reason, once per
+  reason, instead of nothing.
+- The README says to keep the card outside `/data/plugins/could_not_dispatch/`, which an update
+  replaces.
+
 ## 0.7.4 — 2026-11-09
 
 - **The card comes back after an update** (PilaScat/could-not-dispatch#5). An update from the
