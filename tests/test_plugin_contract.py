@@ -780,3 +780,14 @@ def test_the_height_of_the_channels_in_use_reaches_the_server_and_restarts_it(
     assert plugin._signature(card, options, 9721, True, full, caption) != plugin._signature(
         card, options, 9721, True, full, plugin._caption({"show_in_use": True})
     )
+
+
+def test_the_supervisor_reaps_on_every_round_and_on_its_way_out(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    reaped: list[bool] = []
+    monkeypatch.setattr(loaded_module.process, "reap_spawned", lambda: reaped.append(True))
+    monkeypatch.setattr(loaded_module.Plugin, "_keep_running", lambda self, *_a: "")
+    rounds = _Rounds(1)
+    loaded_module.Plugin()._supervise(rounds, lambda: {})
+    assert reaped == [True, True]
