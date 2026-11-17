@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0 — 2026-11-17
+
+- **Apply works on Dispatcharr 0.34.0.** That version wraps the network calls of plugins, and
+  the port check failed with a `TypeError`, so the card never started.
+- **Needs Dispatcharr 0.34.0.** That version runs plugin actions in a background worker, where
+  the restart that ran when a channel started never started the card: after a reload or a
+  restart of Dispatcharr it stayed down until Apply was pressed. A background service that
+  Dispatcharr runs on one of its processes now keeps the card running: it starts with
+  Dispatcharr and comes back by itself within about half a minute of a restart, a reload or an
+  update, with the settings of the last Apply and without reading the card again. The Restart
+  fallback action is gone. On older versions of Dispatcharr the Plugin Hub keeps offering
+  0.7.5.
+- **Dispatcharr asks you to approve what the plugin does** when you update or enable it: a
+  background service, a local server, a process of its own, HTTP calls and the live proxy
+  internals used to check sources. Declining disables the plugin.
+- The settings for the channels in use have a section of their own, and the size, frame rate,
+  bitrate and port a collapsed Advanced one.
+- The server no longer inherits Dispatcharr's open files and sockets, and one that has ended is
+  no longer taken for a running one.
+
 ## 0.7.5 — 2026-11-09
 
 - **A card left running by an update is replaced.** An install from the Plugin Hub does not
