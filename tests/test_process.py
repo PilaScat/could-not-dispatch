@@ -52,6 +52,32 @@ def test_port_is_free_reports_a_bound_port_as_taken():
     assert process.port_is_free("127.0.0.1", port) is True
 
 
+class _SandboxedSocket:
+    def __init__(self, real: socket.socket) -> None:
+        self._socket = real
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._socket, name)
+
+
+class _SandboxedSocketModule:
+    def __getattr__(self, name: str) -> object:
+        value = getattr(socket, name)
+        if name == "socket":
+            return lambda *a, **kw: _SandboxedSocket(socket.socket(*a, **kw))
+        return value
+
+
+def test_port_is_free_works_with_the_dispatcharr_socket_sandbox(monkeypatch):
+    monkeypatch.setattr(process, "socket", _SandboxedSocketModule())
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        port = holder.getsockname()[1]
+        assert process.port_is_free("127.0.0.1", port) is False
+    assert process.port_is_free("127.0.0.1", port) is True
+
+
 def test_resolve_interpreter_returns_a_usable_python():
     resolved = process.resolve_interpreter()
     completed = subprocess.run(

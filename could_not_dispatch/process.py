@@ -46,12 +46,14 @@ def prepend_pythonpath(existing: str | None, entry: str) -> str:
 
 
 def port_is_free(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            probe.bind((host, int(port)))
-        except OSError:
-            return False
+        probe.bind((host, int(port)))
+    except OSError:
+        return False
+    finally:
+        probe.close()
     return True
 
 
