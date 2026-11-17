@@ -11,20 +11,36 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   provider limited to 3 connections served 4 streams (0.3.0). Dispatcharr counts every custom
   stream as a HDHomeRun tuner, so the advertised tuner count grows by one per channel.
 - **The slate is a detached process** serving `http://127.0.0.1:<port>/slate.ts`, not a view
-  inside Dispatcharr. Dispatcharr has no scheduler for plugins: the `restart` action is bound
-  to `channel_start` and brings the process back, at most once a minute per uwsgi worker. When
-  the card cannot be read (`MediaError`), `restart` logs a WARNING once per reason and worker,
-  again after a successful start: a missing file would otherwise give a line a minute per
-  worker. A `RuntimeError` stays with `run()`, logged as an error with its traceback.
+  inside Dispatcharr.
+- **A leader-elected service keeps it running** (0.8.0). On Dispatcharr 0.34.0 actions and
+  event hooks run in a Celery worker, where the old `restart` bound to `channel_start` always
+  skipped, so the card never came back after a reload or a restart. `on_leader_acquired` starts
+  one service, which checks every 10 s and starts the server with the arguments of the last
+  Apply, rebuilt from its `signature` in `state.json`: the service neither downloads nor probes
+  the card, which stays with Apply, now in Celery. The API key comes from
+  `context["get_settings"]()`. A state without a signature asks for an Apply. A problem is
+  logged as a WARNING once per reason, again after a successful start, and retried after 60 s.
+  Losing the leadership does not stop the server, so the next leader adopts it; `stop()` kills
+  it on reload, disable and delete, and `remove` empties the state. A service whose
+  `plugin.json` on disk is newer than its own code starts nothing.
+- **The server starts with `os.posix_spawn`** (0.8.0): the leader can be a uWSGI worker with
+  gevent's `patch_all()`, where `fork()` can hang in gevent's atfork handler.
+  `POSIX_SPAWN_CLOSEFROM` from 3 keeps uWSGI's sockets out of the server, and `PYTHONSAFEPATH`
+  replaces the `cwd` that `posix_spawn` cannot set. A zombie (`Z` in `/proc/<pid>/stat`) counts
+  as gone.
+- **Manifest version 1** (0.8.0) declares `persistent_service`, `subprocess`,
+  `outbound_network`, `network_listener` (the server, and the port check) and `proxy_internals`
+  (the source check); the registry derives the minimum Dispatcharr 0.34.0 from it. The
+  channels in use get a section, and the size, frame rate, bitrate and port a collapsed Advanced
+  one.
 - **A fallback started by an older version is replaced** (0.7.5). An install from the hub does
-  not stop the plugin's processes, and with the state kept in the data folder `restart` used to
-  find the old one running and leave it. The start records `version` with `version_token`, the
-  token of that process: a version counts only while the token matches, since `remember` merges
-  and code that does not know the field would leave it beside a new pid. `restart` replaces a
-  process whose version is missing or older, never one that is newer, or a worker still on the
-  old code would replace it back (`run_action` does not reload a worker). It checks the card
-  first, so an unreadable file keeps the old one, then reads the state again, so a process
-  another worker just started stays; the replacement is logged at INFO. Apply with unchanged
+  not stop the plugin's processes, and with the state kept in the data folder the old one was
+  found running and left. The start records `version` with `version_token`, the token of that
+  process: a version counts only while the token matches, since `remember` merges and code that
+  does not know the field would leave it beside a new pid. The supervisor replaces a process
+  whose version is missing or older, never one that is newer, or a process still on the old code
+  would replace it back. It reads the state again before starting, so a process another one
+  just started stays; the replacement is logged at INFO. Apply with unchanged
   settings keeps the process only if it is not older. `state.is_older` and
   `state.started_version` are copied in Gluetun Rotate and Underfed.
 - **The fallback stays last and off excluded channels.** Apply and Cover new channels detach it
@@ -140,21 +156,31 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   folder; the same function is copied in Gluetun Rotate and Underfed. Nothing removes it on
   delete: on 0.34.0 Dispatcharr asks the user. Whether the fallback is applied is also read from
   the channels: one carrying the stream counts, so the first update to 0.7.4, which still loses
-  `.runtime/`, brings the card back. `restart` asks only after the uwsgi and heartbeat checks,
-  so the database is read at most once a minute per worker.
+  `.runtime/`, brings the card back. The supervisor asks the database only when the fallback
+  is not running, and closes the connection after each round.
 
 ## Traps
 
 - Dispatcharr passes `params` to `run()` and never puts them in `context`. An action started by
   an event gets `{"event": ..., "payload": ...}`; a button gets `{}`.
-- Only the events in `apps/connect/models.py:SUPPORTED_EVENTS` reach a plugin: 20 in 0.32.0.
-  `tests/test_plugin_contract.py` keeps that list.
+- Only the events in `apps/connect/models.py:SUPPORTED_EVENTS` reach a plugin: 20 in 0.32.0
+  and 0.34.0. `tests/test_plugin_contract.py` keeps that list.
+- From 0.34.0 every action, by hand or from an event, runs in a Celery worker of the `plugins`
+  queue, not in the web process. The server's call of `check_sources` through
+  `POST …/run/` waits for that worker, up to 55 s on Dispatcharr's side.
+- From 0.34.0 Dispatcharr wraps `socket`, `subprocess`, `threading`, `requests`,
+  `urllib.request` and `http.client` in every plugin module, manifest version 0 included. The
+  socket proxy has no `__enter__`, so `with socket.socket()` raised `TypeError` in
+  `port_is_free` and Apply failed (0.8.0 closes the socket by hand). A replacement of
+  `subprocess.Popen` is a function, not a class. A grep on 17 November 2026 found no other such
+  use in the code that runs inside Dispatcharr; the server is a process of its own and is not
+  wrapped.
 - From Dispatcharr 0.31.0 a profile URL transform that does not match fails closed. The
   `custom` account's default profile must keep `^(.*)$` → `$1`, or the slate cannot start.
 - Importing a zip with `overwrite=true` replaces the plugin folder: a `media_source` kept inside
-  it is lost, the data folder is not. The new code
-  only runs after `POST /api/plugins/plugins/reload/`, and the reload stops every plugin's
-  processes, so press Apply afterwards.
+  it is lost, the data folder is not. The new code only runs after a reload;
+  `POST /api/plugins/plugins/could_not_dispatch/reload/` (0.34.0) reloads this plugin only, its
+  `stop()` kills the server and the supervisor of the new code starts it again, without an Apply.
 - `/api/channels/channels/` leaves out channels hidden from the output unless asked with
   `visibility_filter=all`: up to 0.5.1 such a channel never went back to the provider, and the
   first bench of 0.6.0, on hidden channels, gave them the usual card.
@@ -214,7 +240,8 @@ in the zip.
 4. A GitHub Release with the CHANGELOG text, the list of commits it contains, and the zip.
 5. Publishing the Release starts `.github/workflows/registry-pr.yml`, which opens the PR to
    `Dispatcharr/Plugins` from the `PilaScat/Plugins` fork: the version and the description of
-   `plugin.json` in `plugins/could-not-dispatch/plugin.json`, the README next to it when it changed, and the
+   `plugin.json` in `plugins/could-not-dispatch/plugin.json`, with its `manifest_version`, which
+   the registry wants equal to the zip's, the README next to it when it changed, and the
    CHANGELOG section as the description. It needs the `REGISTRY_PR_TOKEN` secret, a classic PAT
    of PilaScat with `public_repo` only; it can be rerun by hand with the tag. The registry
    installs the zip at `source_url`, so a README change reaches users only with a new version.
