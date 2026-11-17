@@ -345,6 +345,7 @@ class Plugin:
         self, stop_event: threading.Event, read_settings: Callable[[], dict]
     ) -> str:
         try:
+            process.reap_spawned()
             return self._keep_running(stop_event, read_settings)
         except Exception as exc:
             logger.exception("Could Not Dispatch could not keep the fallback running")
