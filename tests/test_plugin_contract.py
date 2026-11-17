@@ -4,6 +4,7 @@ import importlib.util
 import json
 import logging
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -268,87 +269,213 @@ def test_an_m3u_refresh_covers_new_channels_by_default(loaded_module, covering):
     assert covering == [[7, 8]]
 
 
-CHANNEL_START = {"event": "channel_start", "payload": {}}
 M3U_REFRESH = {"event": "m3u_refresh", "payload": {}}
+
+
+def _card(loaded_module):
+    return loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+
+
+def _signature(loaded_module, full=None, caption=None) -> str:
+    options = loaded_module.EncodeOptions.normalized()
+    return loaded_module.Plugin()._signature(
+        _card(loaded_module), options, 9721, True, full, caption
+    )
+
+
+def _supervise(plugin, settings: dict, stopped: bool = False) -> str:
+    event = threading.Event()
+    if stopped:
+        event.set()
+    return plugin._keep_running(event, lambda: settings)
 
 
 @pytest.fixture
 def restarting(loaded_module, isolated_runtime, monkeypatch):
-    started: list[int] = []
-    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
-    monkeypatch.setattr(loaded_module, "_running_inside_uwsgi", lambda: True)
-    monkeypatch.setattr(loaded_module.Plugin, "_heartbeat_due", lambda self: True)
+    started: list[dict] = []
+
+    def unreadable(*_args):
+        raise AssertionError("the supervisor read the card")
+
     monkeypatch.setattr(loaded_module.process, "is_running", lambda *_a: False)
+    monkeypatch.setattr(loaded_module.media_module, "resolve", unreadable)
+    monkeypatch.setattr(loaded_module.media_module, "inspect", unreadable)
     monkeypatch.setattr(
-        loaded_module.media_module,
-        "resolve",
-        lambda *_a: loaded_module.media_module.Resolved(card.path, from_cache=False),
-    )
-    monkeypatch.setattr(loaded_module.media_module, "inspect", lambda _path: card)
-    monkeypatch.setattr(
-        loaded_module.Plugin, "_start_process", lambda self, *args: started.append(args[2])
+        loaded_module.Plugin, "_spawn", lambda self, values, api_key: started.append(values)
     )
     return started
 
 
-@pytest.mark.parametrize(
-    ("carried", "message", "ports"),
-    [
-        (148, "Fallback restarted.", [9721]),
-        (0, "Nothing to do: the fallback is not applied.", []),
-    ],
-)
-def test_a_channel_start_reads_from_the_channels_whether_the_fallback_is_applied(
-    loaded_module, restarting, monkeypatch, carried, message, ports
+def _remember(loaded_module, isolated_runtime, values: dict) -> None:
+    loaded_module.state_module.save(isolated_runtime / "state.json", values)
+
+
+@pytest.mark.parametrize(("carried", "starts"), [(148, 1), (0, 0)])
+def test_the_supervisor_reads_from_the_channels_whether_the_fallback_is_applied(
+    loaded_module, isolated_runtime, restarting, monkeypatch, carried, starts
 ):
     monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda _name: carried)
-    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
-    assert result["message"] == message
-    assert restarting == ports
+    _remember(loaded_module, isolated_runtime, {"signature": _signature(loaded_module)})
+    assert _supervise(loaded_module.Plugin(), {}) == ""
+    assert len(restarting) == starts
 
 
-def _failing_restarts(loaded_module, monkeypatch, outcomes):
-    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
-    steps = iter(outcomes)
+def test_the_supervisor_restarts_from_the_last_apply_without_reading_the_card(
+    loaded_module, isolated_runtime, restarting
+):
+    signature = _signature(loaded_module)
+    _remember(loaded_module, isolated_runtime, {"applied": True, "signature": signature})
+    _supervise(loaded_module.Plugin(), {"api_key": "k"})
+    assert restarting == [json.loads(signature)]
 
-    def resolve(*_args):
-        outcome = next(steps)
-        if outcome:
-            raise loaded_module.media_module.MediaError(outcome)
-        return loaded_module.media_module.Resolved(card.path, from_cache=False)
 
-    monkeypatch.setattr(loaded_module, "_last_warning", "")
-    monkeypatch.setattr(loaded_module.targeting, "attached_count", lambda _name: 148)
-    monkeypatch.setattr(loaded_module.media_module, "resolve", resolve)
+def test_the_supervisor_starts_the_server_with_the_arguments_of_the_apply(
+    loaded_module, isolated_runtime, monkeypatch
+):
     plugin = loaded_module.Plugin()
-    return [plugin.run("restart", CHANNEL_START, {"settings": {}}) for _ in outcomes]
+    caption = plugin._caption({"show_in_use": True, "in_use_top": 40})
+    full = loaded_module.media_module.Media(Path("/data/full.mp4"), "video", has_audio=True)
+    applied = _started_arguments(loaded_module, monkeypatch, full, caption)
+    values = json.loads(_signature(loaded_module, full, caption))
+    assert plugin._server_arguments(values, 9721) == applied
+
+
+def test_without_an_applied_card_the_supervisor_asks_for_an_apply(
+    loaded_module, isolated_runtime, restarting
+):
+    _remember(loaded_module, isolated_runtime, {"applied": True})
+    assert "Press Apply" in _supervise(loaded_module.Plugin(), {})
+    assert restarting == []
+
+
+def test_the_supervisor_does_not_bring_back_a_removed_fallback(
+    loaded_module, isolated_runtime, restarting, monkeypatch
+):
+    monkeypatch.setattr(loaded_module.targeting, "detach", lambda _name: 0)
+    monkeypatch.setattr(loaded_module.targeting, "delete_streams", lambda _name: 0)
+    _remember(
+        loaded_module, isolated_runtime, {"applied": True, "signature": _signature(loaded_module)}
+    )
+    plugin = loaded_module.Plugin()
+    plugin.run("remove", {}, {"settings": {}})
+    _supervise(plugin, {})
+    assert restarting == []
+
+
+def test_the_supervisor_starts_nothing_once_it_is_told_to_stop(
+    loaded_module, isolated_runtime, restarting
+):
+    _remember(
+        loaded_module, isolated_runtime, {"applied": True, "signature": _signature(loaded_module)}
+    )
+    _supervise(loaded_module.Plugin(), {}, stopped=True)
+    assert restarting == []
+
+
+def test_the_supervisor_of_an_older_version_leaves_the_start_to_the_newer_one(
+    loaded_module, isolated_runtime, restarting, monkeypatch
+):
+    _remember(
+        loaded_module, isolated_runtime, {"applied": True, "signature": _signature(loaded_module)}
+    )
+    monkeypatch.setattr(loaded_module, "_read_manifest", lambda: {"version": "99.0.0"})
+    _supervise(loaded_module.Plugin(), {})
+    assert restarting == []
+
+
+def test_a_running_fallback_is_checked_without_the_database(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    def refuse(_name):
+        raise AssertionError("the database was asked")
+
+    monkeypatch.setattr(loaded_module.process, "is_running", lambda *_a: True)
+    monkeypatch.setattr(loaded_module.targeting, "attached_count", refuse)
+    _remember(
+        loaded_module,
+        isolated_runtime,
+        {"pid": 7, "token": "t", "version": loaded_module.PLUGIN_VERSION, "version_token": "t"},
+    )
+    assert _supervise(loaded_module.Plugin(), {}) == ""
+
+
+class _Rounds:
+    def __init__(self, count: int) -> None:
+        self.count = count
+        self.waits: list[float] = []
+
+    def is_set(self) -> bool:
+        return len(self.waits) >= self.count
+
+    def wait(self, seconds: float) -> bool:
+        self.waits.append(seconds)
+        return self.is_set()
 
 
 def _warnings(caplog) -> list[str]:
     return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
 
 
-def test_a_card_that_cannot_restart_is_logged_once_per_reason(
-    loaded_module, restarting, monkeypatch, caplog
+def _supervised(loaded_module, monkeypatch, outcomes: list[str]) -> _Rounds:
+    steps = iter(outcomes)
+    monkeypatch.setattr(loaded_module, "_last_warning", "")
+    monkeypatch.setattr(
+        loaded_module.Plugin, "_supervise_once", lambda self, *_a: next(steps)
+    )
+    rounds = _Rounds(len(outcomes))
+    loaded_module.Plugin()._supervise(rounds, lambda: {})
+    return rounds
+
+
+def test_a_fallback_that_cannot_start_is_logged_once_per_reason(
+    loaded_module, isolated_runtime, monkeypatch, caplog
 ):
-    gone, unreadable = "'/data/a.png' does not exist.", "ffprobe could not read /data/a.png"
     with caplog.at_level(logging.WARNING):
-        results = _failing_restarts(loaded_module, monkeypatch, [gone, gone, unreadable])
+        rounds = _supervised(loaded_module, monkeypatch, ["gone", "gone", "unreadable"])
     assert _warnings(caplog) == [
-        f"Could Not Dispatch could not restart the fallback: {gone}",
-        f"Could Not Dispatch could not restart the fallback: {unreadable}",
+        "Could Not Dispatch could not keep the fallback running: gone",
+        "Could Not Dispatch could not keep the fallback running: unreadable",
     ]
-    assert results[0] == {"status": "error", "message": gone}
-    assert restarting == []
+    assert rounds.waits == [loaded_module.SUPERVISE_RETRY_SECONDS] * 3
 
 
-def test_after_a_restart_the_same_reason_is_logged_again(
-    loaded_module, restarting, monkeypatch, caplog
+def test_after_a_start_the_same_reason_is_logged_again(
+    loaded_module, isolated_runtime, monkeypatch, caplog
 ):
     with caplog.at_level(logging.WARNING):
-        _failing_restarts(loaded_module, monkeypatch, ["gone", "", "gone"])
+        rounds = _supervised(loaded_module, monkeypatch, ["gone", "", "gone"])
     assert len(_warnings(caplog)) == 2
-    assert restarting == [9721]
+    assert rounds.waits[1] == loaded_module.SUPERVISE_INTERVAL_SECONDS
+
+
+def test_an_error_in_a_round_is_reported_and_the_supervisor_goes_on(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    def fail(self, *_args):
+        raise RuntimeError("The fallback did not answer on port 9721.")
+
+    monkeypatch.setattr(loaded_module.Plugin, "_keep_running", fail)
+    problem = loaded_module.Plugin()._supervise_once(threading.Event(), lambda: {})
+    assert problem == "RuntimeError: The fallback did not answer on port 9721."
+
+
+def test_leadership_starts_one_supervisor_that_reads_the_current_settings(
+    loaded_module, isolated_runtime, restarting
+):
+    _remember(
+        loaded_module, isolated_runtime, {"applied": True, "signature": _signature(loaded_module)}
+    )
+    services: list[tuple] = []
+    context = {
+        "settings": {},
+        "get_settings": lambda: {"api_key": "fresh"},
+        "start_service": lambda target, name=None: services.append((target, name)),
+    }
+    loaded_module.Plugin().on_leader_acquired(context)
+    assert [name for _target, name in services] == ["fallback"]
+    rounds = _Rounds(1)
+    services[0][0](rounds)
+    assert len(restarting) == 1
 
 
 def test_starting_the_fallback_records_the_version_that_started_it(
@@ -385,32 +512,25 @@ def replacing(loaded_module, restarting, isolated_runtime, monkeypatch):
         ({"version": "99.0.0", "version_token": "t"}, False),
     ],
 )
-def test_a_channel_start_replaces_a_fallback_started_by_an_older_version(
+def test_the_supervisor_replaces_a_fallback_started_by_an_older_version(
     loaded_module, replacing, restarting, recorded, replaced
 ):
     remember, stopped = replacing
     if recorded.get("version") == "current":
         recorded = {**recorded, "version": loaded_module.PLUGIN_VERSION}
-    remember({"applied": True, "pid": 7, "token": "t", **recorded})
-    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
-    assert result["message"] == ("Fallback restarted." if replaced else "Fallback is running.")
+    signature = _signature(loaded_module)
+    remember({"applied": True, "signature": signature, "pid": 7, "token": "t", **recorded})
+    _supervise(loaded_module.Plugin(), {})
     assert stopped == ([(7, "t")] if replaced else [])
-    assert restarting == ([9721] if replaced else [])
+    assert len(restarting) == (1 if replaced else 0)
 
 
-def test_an_older_fallback_stays_when_the_card_cannot_be_read(
-    loaded_module, replacing, restarting, monkeypatch
+def test_an_older_fallback_stays_when_there_is_nothing_to_start_from(
+    loaded_module, replacing, restarting
 ):
     remember, stopped = replacing
     remember({"applied": True, "pid": 7, "token": "t"})
-
-    def resolve(*_args):
-        raise loaded_module.media_module.MediaError("gone")
-
-    monkeypatch.setattr(loaded_module, "_last_warning", "")
-    monkeypatch.setattr(loaded_module.media_module, "resolve", resolve)
-    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
-    assert result == {"status": "error", "message": "gone"}
+    assert "Press Apply" in _supervise(loaded_module.Plugin(), {})
     assert stopped == []
     assert restarting == []
 
@@ -418,14 +538,13 @@ def test_an_older_fallback_stays_when_the_card_cannot_be_read(
 def test_a_fallback_another_worker_already_replaced_is_left_alone(
     loaded_module, replacing, restarting, monkeypatch
 ):
-    _remember, stopped = replacing
-    older = {"applied": True, "pid": 7, "token": "t"}
+    _remember_state, stopped = replacing
+    older = {"applied": True, "signature": _signature(loaded_module), "pid": 7, "token": "t"}
     current = {**older, "pid": 8, "token": "u", "version_token": "u"}
     current["version"] = loaded_module.PLUGIN_VERSION
     states = iter([older, current])
     monkeypatch.setattr(loaded_module.Plugin, "_state", lambda self: next(states))
-    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
-    assert result["message"] == "Fallback is running."
+    _supervise(loaded_module.Plugin(), {})
     assert stopped == []
     assert restarting == []
 
@@ -441,7 +560,7 @@ def test_apply_with_the_same_settings_replaces_only_an_older_fallback(
     monkeypatch.setattr(
         loaded_module.Plugin, "_start_process", lambda self, *a: started.append(True)
     )
-    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    card = _card(loaded_module)
     options = loaded_module.EncodeOptions.normalized()
     restarted = loaded_module.Plugin()._ensure_process("s", card, options, 9721, "")
     assert restarted is not kept
@@ -466,24 +585,9 @@ def test_an_m3u_refresh_reads_from_the_channels_whether_the_fallback_is_applied(
     assert attached == covered
 
 
-@pytest.mark.parametrize(
-    ("inside_uwsgi", "due", "message"),
-    [
-        (False, True, "Skipped: the fallback only starts in the Dispatcharr web process."),
-        (True, False, "Checked recently."),
-    ],
-)
-def test_a_channel_start_asks_the_database_at_most_once_a_minute(
-    loaded_module, isolated_runtime, monkeypatch, inside_uwsgi, due, message
-):
-    def refuse(_name):
-        raise AssertionError("the database was asked")
-
-    monkeypatch.setattr(loaded_module, "_running_inside_uwsgi", lambda: inside_uwsgi)
-    monkeypatch.setattr(loaded_module.Plugin, "_heartbeat_due", lambda self: due)
-    monkeypatch.setattr(loaded_module.targeting, "attached_count", refuse)
-    result = loaded_module.Plugin().run("restart", CHANNEL_START, {"settings": {}})
-    assert result["message"] == message
+def test_no_action_waits_for_a_channel_to_start(manifest):
+    events = [event for action in manifest["actions"] for event in action.get("events", [])]
+    assert events == ["m3u_refresh"]
 
 
 def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):

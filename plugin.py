@@ -9,6 +9,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,8 @@ try:
         STARTUP_PROBE_SECONDS,
         STREAM_NAME,
         STREAM_PATH,
+        SUPERVISE_INTERVAL_SECONDS,
+        SUPERVISE_RETRY_SECONDS,
     )
     from .could_not_dispatch.encoder import Caption, EncodeOptions
     from .could_not_dispatch.server import slate_url
@@ -58,6 +62,8 @@ except ImportError:
         STARTUP_PROBE_SECONDS,
         STREAM_NAME,
         STREAM_PATH,
+        SUPERVISE_INTERVAL_SECONDS,
+        SUPERVISE_RETRY_SECONDS,
     )
     from could_not_dispatch.encoder import Caption, EncodeOptions
     from could_not_dispatch.server import slate_url
@@ -71,11 +77,7 @@ STATE_FILE = "state.json"
 LOG_FILE = "fallback.log"
 MEDIA_CACHE_FOLDER = "media"
 
-HEARTBEAT_INTERVAL_SECONDS = 60.0
 DETACHING_REASONS = frozenset({"disable", "delete"})
-
-_heartbeat_lock = threading.Lock()
-_heartbeat_checked_at = 0.0
 
 _warning_lock = threading.Lock()
 _last_warning = ""
@@ -108,12 +110,12 @@ def _read_manifest() -> dict[str, Any]:
 _MANIFEST = _read_manifest()
 
 
-def _running_inside_uwsgi() -> bool:
+def _close_database_connection() -> None:
     try:
-        import uwsgi  # noqa: F401
+        from django.db import connection
     except ImportError:
-        return False
-    return True
+        return
+    connection.close()
 
 
 def _as_int(value: object, fallback: int) -> int:
@@ -174,7 +176,6 @@ class Plugin:
             "status": self._status,
             "remove": self._remove,
             "reapply": self._reapply,
-            "restart": self._restart,
             SOURCE_CHECK_ACTION: self._check_sources,
         }
         handler = handlers.get((action or "").strip().lower())
@@ -317,44 +318,75 @@ class Plugin:
         attachment = targeting.attach(STREAM_NAME, self._stream_url(port), channel_ids)
         return {"status": "ok", "message": self._coverage_message(attachment, len(channel_ids))}
 
-    def _restart(self, context: dict) -> dict:
-        settings = dict(context.get("settings") or {})
-        if not _running_inside_uwsgi():
-            return {
-                "status": "ok",
-                "message": "Skipped: the fallback only starts in the Dispatcharr web process.",
-            }
-        if not self._heartbeat_due():
-            return {"status": "ok", "message": "Checked recently."}
-        state = self._state()
-        if not self._applied(state):
-            return {"status": "ok", "message": "Nothing to do: the fallback is not applied."}
+    def on_leader_acquired(self, context: dict) -> None:
+        context = dict(context or {})
+        self._locate(context)
+        snapshot = dict(context.get("settings") or {})
+        reader = context.get("get_settings")
 
-        if self._current(state):
-            return {"status": "ok", "message": "Fallback is running."}
+        def read_settings() -> dict:
+            return dict(reader() or {}) if callable(reader) else snapshot
 
-        port = _as_int(settings.get("port"), DEFAULT_PORT)
+        supervise = partial(self._supervise, read_settings=read_settings)
+        context["start_service"](supervise, name="fallback")
+
+    def _supervise(self, stop_event: threading.Event, read_settings: Callable[[], dict]) -> None:
+        reported = ""
+        while not stop_event.is_set():
+            problem = self._supervise_once(stop_event, read_settings)
+            if problem:
+                _warn_once(f"Could Not Dispatch could not keep the fallback running: {problem}")
+            elif reported:
+                _forget_warning()
+            reported = problem
+            stop_event.wait(SUPERVISE_RETRY_SECONDS if problem else SUPERVISE_INTERVAL_SECONDS)
+
+    def _supervise_once(
+        self, stop_event: threading.Event, read_settings: Callable[[], dict]
+    ) -> str:
         try:
-            resolved = media_module.resolve(settings.get("media_source", ""), self._media_cache)
-            media = media_module.inspect(resolved.path)
-            options = self._encode_options(settings, media)
-            full = self._full_media(settings)
-            caption = self._caption(settings)
-        except media_module.MediaError as exc:
-            _warn_once(f"Could Not Dispatch could not restart the fallback: {exc}")
-            raise
+            return self._keep_running(stop_event, read_settings)
+        except Exception as exc:
+            logger.exception("Could Not Dispatch could not keep the fallback running")
+            return f"{type(exc).__name__}: {exc}"
+        finally:
+            _close_database_connection()
+
+    def _keep_running(self, stop_event: threading.Event, read_settings: Callable[[], dict]) -> str:
+        if self._superseded():
+            return ""
+        state = self._state()
+        if self._current(state) or not self._applied(state):
+            return ""
+        values = self._applied_values_of(state)
+        if values is None:
+            return "the last Apply left nothing to start it from. Press Apply."
+        api_key = _api_key(read_settings())
+        if stop_event.is_set():
+            return ""
         latest = self._state()
         if self._current(latest):
-            return {"status": "ok", "message": "Fallback is running."}
+            return ""
         if process.is_running(latest.get("pid"), latest.get("token")):
             logger.info(
                 "Could Not Dispatch replaces the fallback started by %s",
                 state_module.started_version(latest) or "an older version",
             )
             process.terminate(latest.get("pid"), latest.get("token"))
-        self._start_process(media, options, port, _api_key(settings), full, caption)
-        _forget_warning()
-        return {"status": "ok", "message": "Fallback restarted."}
+        self._spawn(values, api_key)
+        return ""
+
+    def _superseded(self) -> bool:
+        return state_module.is_older(PLUGIN_VERSION, _read_manifest().get("version"))
+
+    def _applied_values_of(self, state: dict) -> dict | None:
+        try:
+            values = json.loads(str(state.get("signature") or ""))
+        except ValueError:
+            return None
+        if not isinstance(values, dict) or not values.get("media") or not values.get("kind"):
+            return None
+        return values
 
     def _applied(self, state: dict) -> bool:
         return bool(state.get("applied")) or targeting.attached_count(STREAM_NAME) > 0
@@ -450,6 +482,11 @@ class Plugin:
         full: media_module.Media | None = None,
         caption: Caption | None = None,
     ) -> None:
+        values = self._applied_values(media, options, port, bool(api_key), full, caption)
+        self._spawn(values, api_key)
+
+    def _spawn(self, values: dict, api_key: str) -> None:
+        port = _as_int(values.get("port"), DEFAULT_PORT)
         if not process.port_is_free(LISTEN_HOST, port):
             reclaimed = process.terminate_strays(port)
             if reclaimed:
@@ -465,43 +502,9 @@ class Plugin:
                 )
 
         token = uuid.uuid4().hex
-        arguments = [
-            "--media",
-            str(media.path),
-            "--kind",
-            media.kind,
-            "--host",
-            LISTEN_HOST,
-            "--port",
-            str(port),
-            "--path",
-            STREAM_PATH,
-            "--width",
-            str(options.width),
-            "--height",
-            str(options.height),
-            "--fps",
-            str(options.fps),
-            "--video-kbps",
-            str(options.video_kbps),
-            "--plugin-key",
-            self._key,
-        ]
-        if media.has_audio:
-            arguments.append("--has-audio")
-        if full is not None:
-            arguments += ["--full-media", str(full.path), "--full-kind", full.kind]
-            if full.has_audio:
-                arguments.append("--full-has-audio")
-            if caption is not None:
-                arguments += ["--in-use-file", str(caption.text_file)]
-                if caption.font is not None:
-                    arguments += ["--in-use-font", str(caption.font)]
-                arguments += ["--in-use-top", str(caption.top_percent)]
-
         pid = process.spawn(
             BASE_DIR,
-            arguments,
+            self._server_arguments(values, port),
             token,
             self._log_path,
             extra_env={API_KEY_ENV: api_key} if api_key else None,
@@ -540,14 +543,46 @@ class Plugin:
         except (urllib.error.URLError, OSError, ValueError):
             return False
 
-    def _heartbeat_due(self) -> bool:
-        global _heartbeat_checked_at
-        now = time.monotonic()
-        with _heartbeat_lock:
-            if now - _heartbeat_checked_at < HEARTBEAT_INTERVAL_SECONDS:
-                return False
-            _heartbeat_checked_at = now
-        return True
+    def _server_arguments(self, values: dict, port: int) -> list[str]:
+        arguments = [
+            "--media",
+            str(values["media"]),
+            "--kind",
+            str(values["kind"]),
+            "--host",
+            LISTEN_HOST,
+            "--port",
+            str(port),
+            "--path",
+            STREAM_PATH,
+            "--width",
+            str(values["width"]),
+            "--height",
+            str(values["height"]),
+            "--fps",
+            str(values["fps"]),
+            "--video-kbps",
+            str(values["video_kbps"]),
+            "--plugin-key",
+            self._key,
+        ]
+        if values.get("has_audio"):
+            arguments.append("--has-audio")
+        if values.get("full_media"):
+            arguments += [
+                "--full-media",
+                str(values["full_media"]),
+                "--full-kind",
+                str(values["full_kind"]),
+            ]
+            if values.get("full_has_audio"):
+                arguments.append("--full-has-audio")
+            if values.get("in_use"):
+                arguments += ["--in-use-file", str(self._runtime / IN_USE_FILE_NAME)]
+                if values.get("in_use_font"):
+                    arguments += ["--in-use-font", str(values["in_use_font"])]
+                arguments += ["--in-use-top", str(values["in_use_top"])]
+        return arguments
 
     def _encode_options(
         self, settings: dict, media: media_module.Media | None = None
@@ -571,25 +606,35 @@ class Plugin:
         caption: Caption | None = None,
     ) -> str:
         return json.dumps(
-            {
-                "full_media": str(full.path) if full else "",
-                "full_kind": full.kind if full else "",
-                "full_has_audio": full.has_audio if full else False,
-                "in_use": caption is not None,
-                "in_use_font": str(caption.font) if caption and caption.font else "",
-                "in_use_top": caption.top_percent if caption else None,
-                "media": str(media.path),
-                "kind": media.kind,
-                "has_audio": media.has_audio,
-                "port": port,
-                "width": options.width,
-                "height": options.height,
-                "fps": options.fps,
-                "video_kbps": options.video_kbps,
-                "recovery": recovery,
-            },
-            sort_keys=True,
+            self._applied_values(media, options, port, recovery, full, caption), sort_keys=True
         )
+
+    def _applied_values(
+        self,
+        media: media_module.Media,
+        options: EncodeOptions,
+        port: int,
+        recovery: bool,
+        full: media_module.Media | None = None,
+        caption: Caption | None = None,
+    ) -> dict:
+        return {
+            "full_media": str(full.path) if full else "",
+            "full_kind": full.kind if full else "",
+            "full_has_audio": full.has_audio if full else False,
+            "in_use": caption is not None,
+            "in_use_font": str(caption.font) if caption and caption.font else "",
+            "in_use_top": caption.top_percent if caption else None,
+            "media": str(media.path),
+            "kind": media.kind,
+            "has_audio": media.has_audio,
+            "port": port,
+            "width": options.width,
+            "height": options.height,
+            "fps": options.fps,
+            "video_kbps": options.video_kbps,
+            "recovery": recovery,
+        }
 
     def _full_media(self, settings: dict) -> media_module.Media | None:
         source = str(settings.get("media_source_full") or "").strip()

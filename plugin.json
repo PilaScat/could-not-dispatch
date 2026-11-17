@@ -131,15 +131,9 @@
       "description": "Covers channels that do not carry the fallback yet.",
       "button_label": "Cover",
       "button_variant": "default",
-      "events": ["m3u_refresh"]
-    },
-    {
-      "id": "restart",
-      "label": "Restart fallback",
-      "description": "Starts the fallback again if it is down.",
-      "button_label": "Restart",
-      "button_variant": "default",
-      "events": ["channel_start"]
+      "events": [
+        "m3u_refresh"
+      ]
     },
     {
       "id": "remove",
