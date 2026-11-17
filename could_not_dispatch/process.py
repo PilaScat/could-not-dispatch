@@ -14,6 +14,7 @@ from pathlib import Path
 from .constants import RUN_TOKEN_ENV, SERVER_MODULE, TERMINATE_GRACE_SECONDS
 
 MAX_LOG_BYTES = 2 * 1024 * 1024
+EXEC_WAIT_SECONDS = 2.0
 
 
 def resolve_interpreter() -> str:
@@ -87,9 +88,19 @@ def spawn(
     _trim_log(log_path)
     if sys.platform == "win32":
         return _popen(command, environment, base_dir, log_path)
-    return os.posix_spawn(
+    pid = os.posix_spawn(
         command[0], command, environment, file_actions=spawn_actions(log_path), setsid=True
     )
+    _await_exec(pid, run_token)
+    return pid
+
+
+def _await_exec(pid: int, run_token: str, timeout: float = EXEC_WAIT_SECONDS) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if read_token(pid) == run_token or is_zombie(pid) or not os.path.isdir(f"/proc/{pid}"):
+            return
+        time.sleep(0.01)
 
 
 def spawn_actions(log_path: Path) -> list[tuple]:
@@ -103,7 +114,16 @@ def spawn_actions(log_path: Path) -> list[tuple]:
     close_from = getattr(os, "POSIX_SPAWN_CLOSEFROM", None)
     if close_from is not None:
         actions.append((close_from, 3))
+    else:
+        actions += [(os.POSIX_SPAWN_CLOSE, fd) for fd in _open_descriptors() if fd > 2]
     return actions
+
+
+def _open_descriptors() -> list[int]:
+    try:
+        return sorted(int(name) for name in os.listdir("/proc/self/fd") if name.isdigit())
+    except OSError:
+        return []
 
 
 def _popen(
