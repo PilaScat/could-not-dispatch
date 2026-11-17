@@ -8,6 +8,14 @@
   "repo_url": "https://github.com/PilaScat/could-not-dispatch",
   "help_url": "https://github.com/PilaScat/could-not-dispatch#readme",
   "source_url": "https://github.com/PilaScat/could-not-dispatch/releases/download/v{version}/could-not-dispatch-{version}.zip",
+  "manifest_version": 1,
+  "capabilities": [
+    "network_listener",
+    "outbound_network",
+    "persistent_service",
+    "proxy_internals",
+    "subprocess"
+  ],
   "fields": [
     {
       "id": "media_source",
@@ -26,60 +34,11 @@
       "help_text": "Optional, given like the one above. Shown instead of it to a channel whose every source belongs to a provider account that was at its connection limit in the last 20 seconds, so the message can say that every connection is in use. Needs the API key. Empty: the same card for every channel."
     },
     {
-      "id": "show_in_use",
-      "label": "Show the channels in use",
-      "type": "boolean",
-      "default": false,
-      "help_text": "Writes on the card for a full provider the channels that hold its connections, one per line, with the programme on now when the guide has one. Leave the picture empty where the lines go, set just below."
-    },
-    {
-      "id": "in_use_top",
-      "label": "Height of the channels in use (%)",
-      "type": "number",
-      "default": 58.5,
-      "help_text": "Where the first line starts, as a share of the picture's height from the top, between 0 and 95. 58.5 puts it at 632 px on a 1080p card."
-    },
-    {
-      "id": "in_use_font",
-      "label": "Font for the channels in use",
+      "id": "api_key",
+      "label": "API key",
       "type": "string",
       "default": "",
-      "placeholder": "/data/fonts/channels.ttf",
-      "help_text": "Optional: a .ttf, .otf or .ttc file inside the Dispatcharr data volume. Empty: the sans-serif font of the container."
-    },
-    {
-      "id": "port",
-      "label": "Local port",
-      "type": "number",
-      "default": 9721,
-      "help_text": "Port the fallback stream listens on, inside the Dispatcharr container. Change it only on a conflict."
-    },
-    {
-      "id": "width",
-      "label": "Width (px)",
-      "type": "number",
-      "default": 0,
-      "help_text": "0 matches the picture, up to 1920x1080. Width and height are a pair: set both, or leave both at 0."
-    },
-    {
-      "id": "height",
-      "label": "Height (px)",
-      "type": "number",
-      "default": 0
-    },
-    {
-      "id": "fps",
-      "label": "Frames per second",
-      "type": "number",
-      "default": 25,
-      "help_text": "Keep it at the rate of your channels: Jellyfin keeps the frame rate a session starts with, so a viewer who starts on the card at 5 stays at 5 after the channel is back."
-    },
-    {
-      "id": "video_kbps",
-      "label": "Stream bitrate (kbit/s)",
-      "type": "number",
-      "default": 2000,
-      "help_text": "The fallback is padded to this constant rate. Lowering it costs picture quality on dark gradients and makes the card appear later, since Dispatcharr buffers 1 MB before showing anything."
+      "help_text": "A Dispatcharr API key. With it, a channel left on the fallback goes back to the first of its streams that sends data, checked after 30 seconds, then at longer intervals, or as soon as a connection frees up when it fell back for lack of one. Empty keeps channels on the fallback."
     },
     {
       "id": "exclude_groups",
@@ -103,11 +62,79 @@
       "help_text": "Attaches the fallback to channels added by an M3U refresh."
     },
     {
-      "id": "api_key",
-      "label": "API key",
+      "id": "channels_in_use",
+      "label": "Channels in use",
+      "type": "section"
+    },
+    {
+      "id": "show_in_use",
+      "label": "Show the channels in use",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Writes on the card for a full provider the channels that hold its connections, one per line, with the programme on now when the guide has one. Leave the picture empty where the lines go, set just below.",
+      "section": "channels_in_use"
+    },
+    {
+      "id": "in_use_top",
+      "label": "Height of the channels in use (%)",
+      "type": "number",
+      "default": 58.5,
+      "help_text": "Where the first line starts, as a share of the picture's height from the top, between 0 and 95. 58.5 puts it at 632 px on a 1080p card.",
+      "section": "channels_in_use"
+    },
+    {
+      "id": "in_use_font",
+      "label": "Font for the channels in use",
       "type": "string",
       "default": "",
-      "help_text": "A Dispatcharr API key. With it, a channel left on the fallback goes back to the first of its streams that sends data, checked after 30 seconds, then at longer intervals, or as soon as a connection frees up when it fell back for lack of one. Empty keeps channels on the fallback."
+      "placeholder": "/data/fonts/channels.ttf",
+      "help_text": "Optional: a .ttf, .otf or .ttc file inside the Dispatcharr data volume. Empty: the sans-serif font of the container.",
+      "section": "channels_in_use"
+    },
+    {
+      "id": "advanced",
+      "label": "Advanced",
+      "type": "section",
+      "collapsed": true
+    },
+    {
+      "id": "port",
+      "label": "Local port",
+      "type": "number",
+      "default": 9721,
+      "help_text": "Port the fallback stream listens on, inside the Dispatcharr container. Change it only on a conflict.",
+      "section": "advanced"
+    },
+    {
+      "id": "width",
+      "label": "Width (px)",
+      "type": "number",
+      "default": 0,
+      "help_text": "0 matches the picture, up to 1920x1080. Width and height are a pair: set both, or leave both at 0.",
+      "section": "advanced"
+    },
+    {
+      "id": "height",
+      "label": "Height (px)",
+      "type": "number",
+      "default": 0,
+      "section": "advanced"
+    },
+    {
+      "id": "fps",
+      "label": "Frames per second",
+      "type": "number",
+      "default": 25,
+      "help_text": "Keep it at the rate of your channels: Jellyfin keeps the frame rate a session starts with, so a viewer who starts on the card at 5 stays at 5 after the channel is back.",
+      "section": "advanced"
+    },
+    {
+      "id": "video_kbps",
+      "label": "Stream bitrate (kbit/s)",
+      "type": "number",
+      "default": 2000,
+      "help_text": "The fallback is padded to this constant rate. Lowering it costs picture quality on dark gradients and makes the card appear later, since Dispatcharr buffers 1 MB before showing anything.",
+      "section": "advanced"
     }
   ],
   "actions": [

@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_NAME = "_dispatcharr_plugin_could_not_dispatch"
 
-ALLOWED_FIELD_TYPES = {"boolean", "number", "string", "text", "select", "info"}
+ALLOWED_FIELD_TYPES = {"boolean", "number", "string", "text", "select", "info", "section"}
 PLUGIN_HOOK_EVENTS = {
     "channel_start",
     "channel_stop",
@@ -583,6 +583,26 @@ def test_an_m3u_refresh_reads_from_the_channels_whether_the_fallback_is_applied(
     monkeypatch.setattr(loaded_module.targeting, "attach", attach)
     loaded_module.Plugin().run("reapply", M3U_REFRESH, {"settings": {}})
     assert attached == covered
+
+
+def test_the_manifest_declares_version_one_and_what_the_plugin_does(manifest):
+    assert manifest["manifest_version"] == 1
+    assert manifest["capabilities"] == [
+        "network_listener",
+        "outbound_network",
+        "persistent_service",
+        "proxy_internals",
+        "subprocess",
+    ]
+
+
+def test_every_field_sits_in_a_declared_section_or_at_the_top(manifest):
+    sections = {f["id"] for f in manifest["fields"] if f["type"] == "section"}
+    assert sections == {"channels_in_use", "advanced"}
+    for field in manifest["fields"]:
+        assert field.get("section", "advanced") in sections, field["id"]
+    advanced = next(f for f in manifest["fields"] if f["id"] == "advanced")
+    assert advanced["collapsed"] is True
 
 
 def test_no_action_waits_for_a_channel_to_start(manifest):
