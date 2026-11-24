@@ -34,6 +34,14 @@
       "help_text": "Optional, given like the one above. Shown instead of it to a channel whose every source belongs to a provider account that was at its connection limit in the last 20 seconds, so the message can say that every connection is in use. Needs the API key. Empty: the same card for every channel."
     },
     {
+      "id": "media_source_empty",
+      "label": "Image or video when the channel has no stream of its own",
+      "type": "string",
+      "default": "",
+      "placeholder": "/data/could-not-dispatch-empty.png",
+      "help_text": "Optional, given like the first one. Shown instead of it to a channel whose only stream is the fallback, such as an event channel between events, so the message can say that nothing is on. Needs the API key. Empty: those channels get the usual card."
+    },
+    {
       "id": "api_key",
       "label": "API key",
       "type": "string",
