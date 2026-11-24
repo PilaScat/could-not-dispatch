@@ -7,8 +7,9 @@ PLUGIN_SLUG = "could-not-dispatch"
 PLUGIN_VERSION = "0.8.0"
 PLUGIN_DESCRIPTION = (
     "Plays a looping image or video when every stream on a channel has failed, "
-    "so viewers see a message instead of an error. It can show a second card when the "
-    "provider is full, list the channels in use, and send channels back to their stream."
+    "so viewers see a message instead of an error. It can show a different card when the "
+    "provider is full or when a channel has no stream of its own, list the channels in use, "
+    "and send channels back to their stream."
 )
 
 STREAM_NAME = "Could Not Dispatch"

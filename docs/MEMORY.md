@@ -90,6 +90,15 @@ Decisions, traps and the release routine. What the plugin does for a user is in 
   itself is not taken for one waiting for a connection, so it waits 30 s instead of being sent
   back to its dead sources the moment it leaves them (bench of 28 October: 0 s before). `in_use`
   still counts every channel holding a connection.
+- **A third card for a channel with no stream of its own** (0.9.0, issue #6: event channels
+  that get a stream only around game time). `Recovery.empty(uuid)` holds when the channel is in
+  the catalogue and every stream of its chain is a card; a channel not in it yet gets the usual
+  card. `card_for` checks it before the full provider, which a chain without sources never
+  reaches anyway. While such a channel is watched it counts as unknown, so the catalogue is read
+  again at most every 30 s instead of every 15 minutes, and a channel with no stream besides the
+  fallback counts no try: the wait stays at 30 s, the log says it once per episode, and a stream
+  added later is reached within about a minute. A channel whose first stream is less than 15
+  minutes old still gets this card if that stream fails, until the next read.
 - **The channels in use are written by `drawtext` from a file** (0.7.0, off by default,
   asked by the operator on 28 October 2026). The recovery loop already reads
   `/proxy/ts/status` every 2-10 s, so after each check it writes the channels on the
