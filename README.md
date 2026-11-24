@@ -1,8 +1,9 @@
 # Could Not Dispatch
 
 A Dispatcharr plugin that plays a looping image or video when every stream on a channel has
-failed, so viewers see a message instead of an error. It can show a second card when the
-provider is full, list the channels in use, and send channels back to their stream.
+failed, so viewers see a message instead of an error. It can show a different card when the
+provider is full or when a channel has no stream of its own, list the channels in use, and send
+channels back to their stream.
 
 | Every stream failed | Provider full, with the channels in use |
 |---|---|
@@ -27,6 +28,7 @@ Plugins page. Enable the plugin and approve what it asks for, fill in the settin
 |---|---|
 | Image or video | A path in the data volume, outside `/data/plugins/could_not_dispatch/`, which an update replaces, or an `http(s)` link |
 | Image or video when the provider is full | Optional second card, for channels that found no free connection. Needs the API key |
+| Image or video when the channel has no stream of its own | Optional third card, for channels whose only stream is the fallback, such as event channels between events. Needs the API key |
 | Show the channels in use | Writes them on the second card, with the programme on now |
 | Height of the channels in use (%) | Where the first line starts, from the top. 58.5 by default |
 | Font for the channels in use | Optional `.ttf`, `.otf` or `.ttc`. Empty: the container's sans-serif |
@@ -57,6 +59,9 @@ Plugins page. Enable the plugin and approve what it asks for, fill in the settin
   connection, counted like any other, or waits for one.
 - **A full provider gets the second card**, for a channel whose streams are all on accounts at
   their limit, and the channel goes back as soon as a connection frees up.
+- **A channel with no stream of its own gets the third card**, when its only stream is the
+  fallback. While someone watches it, the plugin looks every 30 seconds for a stream added since
+  and switches to it.
 - **The channels in use** are centred lines, 50 px high on a 1080p card, in grey `#606469`:
   leave that part of the picture empty.
 - **Jellyfin can stall after a switch** with the `FFmpeg` stream profile, which starts the

@@ -222,14 +222,17 @@ class Plugin:
 
         resolved = media_module.resolve(settings.get("media_source", ""), self._media_cache)
         media = media_module.inspect(resolved.path)
-        full = self._full_media(settings)
+        full = self._optional_media(settings, "media_source_full")
+        empty = self._optional_media(settings, "media_source_empty")
         caption = self._caption(settings)
         options = self._encode_options(settings, media)
 
         api_key = _api_key(settings)
-        signature = self._signature(media, options, port, bool(api_key), full, caption)
+        signature = self._signature(media, options, port, bool(api_key), full, caption, empty)
 
-        started = self._ensure_process(signature, media, options, port, api_key, full, caption)
+        started = self._ensure_process(
+            signature, media, options, port, api_key, full, caption, empty
+        )
 
         channel_ids = targeting.target_channel_ids(
             settings.get("exclude_groups"), settings.get("exclude_channels")
@@ -250,6 +253,7 @@ class Plugin:
                 full,
                 api_key,
                 caption,
+                empty,
             ),
         }
 
@@ -264,6 +268,7 @@ class Plugin:
         full: media_module.Media | None = None,
         api_key: str = "",
         caption: Caption | None = None,
+        empty: media_module.Media | None = None,
     ) -> str:
         parts = [
             f"Fallback {'started' if started else 'already running'} from the "
@@ -280,6 +285,13 @@ class Plugin:
             )
         elif caption is not None:
             parts.append("The channels in use need a card for a full provider, so none is shown.")
+        if empty is not None:
+            parts.append(
+                f"A channel with no stream of its own gets the {empty.kind} set for that."
+                if api_key
+                else "The card for a channel with no stream of its own needs the API key, "
+                "so it is not in use."
+            )
         parts.append(self._coverage_message(attachment, covered))
         return " ".join(parts)
 
@@ -450,6 +462,7 @@ class Plugin:
         api_key: str,
         full: media_module.Media | None = None,
         caption: Caption | None = None,
+        empty: media_module.Media | None = None,
     ) -> bool:
         state = self._state()
         pid = state.get("pid")
@@ -458,7 +471,7 @@ class Plugin:
             if state.get("signature") == signature and not self._older(state):
                 return False
             process.terminate(pid, token)
-        self._start_process(media, options, port, api_key, full, caption)
+        self._start_process(media, options, port, api_key, full, caption, empty)
         return True
 
     def _older(self, state: dict) -> bool:
@@ -483,8 +496,9 @@ class Plugin:
         api_key: str,
         full: media_module.Media | None = None,
         caption: Caption | None = None,
+        empty: media_module.Media | None = None,
     ) -> None:
-        values = self._applied_values(media, options, port, bool(api_key), full, caption)
+        values = self._applied_values(media, options, port, bool(api_key), full, caption, empty)
         self._spawn(values, api_key)
 
     def _spawn(self, values: dict, api_key: str) -> None:
@@ -584,6 +598,15 @@ class Plugin:
                 if values.get("in_use_font"):
                     arguments += ["--in-use-font", str(values["in_use_font"])]
                 arguments += ["--in-use-top", str(values["in_use_top"])]
+        if values.get("empty_media"):
+            arguments += [
+                "--empty-media",
+                str(values["empty_media"]),
+                "--empty-kind",
+                str(values["empty_kind"]),
+            ]
+            if values.get("empty_has_audio"):
+                arguments.append("--empty-has-audio")
         return arguments
 
     def _encode_options(
@@ -606,9 +629,11 @@ class Plugin:
         recovery: bool,
         full: media_module.Media | None = None,
         caption: Caption | None = None,
+        empty: media_module.Media | None = None,
     ) -> str:
         return json.dumps(
-            self._applied_values(media, options, port, recovery, full, caption), sort_keys=True
+            self._applied_values(media, options, port, recovery, full, caption, empty),
+            sort_keys=True,
         )
 
     def _applied_values(
@@ -619,11 +644,15 @@ class Plugin:
         recovery: bool,
         full: media_module.Media | None = None,
         caption: Caption | None = None,
+        empty: media_module.Media | None = None,
     ) -> dict:
         return {
             "full_media": str(full.path) if full else "",
             "full_kind": full.kind if full else "",
             "full_has_audio": full.has_audio if full else False,
+            "empty_media": str(empty.path) if empty else "",
+            "empty_kind": empty.kind if empty else "",
+            "empty_has_audio": empty.has_audio if empty else False,
             "in_use": caption is not None,
             "in_use_font": str(caption.font) if caption and caption.font else "",
             "in_use_top": caption.top_percent if caption else None,
@@ -638,8 +667,8 @@ class Plugin:
             "recovery": recovery,
         }
 
-    def _full_media(self, settings: dict) -> media_module.Media | None:
-        source = str(settings.get("media_source_full") or "").strip()
+    def _optional_media(self, settings: dict, key: str) -> media_module.Media | None:
+        source = str(settings.get(key) or "").strip()
         if not source:
             return None
         resolved = media_module.resolve(source, self._media_cache)

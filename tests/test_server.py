@@ -243,9 +243,12 @@ class _Served:
         chunk_timeout: float = 1.0,
         crowded_broadcaster: Broadcaster | None = None,
         crowded=None,
+        empty_broadcaster: Broadcaster | None = None,
+        empty=None,
     ) -> None:
         self.broadcaster = broadcaster
         self.crowded_broadcaster = crowded_broadcaster
+        self.empty_broadcaster = empty_broadcaster
         self.server = SlateServer(
             ("127.0.0.1", 0),
             broadcaster,
@@ -253,6 +256,8 @@ class _Served:
             chunk_timeout,
             crowded_broadcaster=crowded_broadcaster,
             crowded=crowded,
+            empty_broadcaster=empty_broadcaster,
+            empty=empty,
         )
         self.thread = threading.Thread(
             target=self.server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True
@@ -270,6 +275,8 @@ class _Served:
         self.broadcaster.close()
         if self.crowded_broadcaster is not None:
             self.crowded_broadcaster.close()
+        if self.empty_broadcaster is not None:
+            self.empty_broadcaster.close()
         self.server.server_close()
 
 
@@ -368,6 +375,63 @@ def test_without_a_card_for_a_full_provider_every_channel_gets_the_one_card(serv
     running = served(_feeding(b"card"), crowded=lambda uuid: True)
     with urllib.request.urlopen(f"{running.base}/slate.ts?channel=uuid-full", timeout=5) as r:
         assert r.read(4) == b"card"
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("?channel=uuid-empty", b"none"), ("?channel=uuid-other", b"full"), ("", b"card")],
+)
+def test_a_channel_with_no_stream_of_its_own_gets_its_card_before_the_full_one(
+    served, query, expected
+):
+    running = served(
+        _feeding(b"card"),
+        crowded_broadcaster=_feeding(b"full"),
+        crowded=lambda uuid: True,
+        empty_broadcaster=_feeding(b"none"),
+        empty=lambda uuid: uuid == "uuid-empty",
+    )
+    with urllib.request.urlopen(f"{running.base}/slate.ts{query}", timeout=5) as response:
+        assert response.read(4) == expected
+
+
+def test_without_a_card_for_a_channel_with_no_stream_it_gets_the_usual_one(served):
+    running = served(_feeding(b"card"), empty=lambda uuid: True)
+    with urllib.request.urlopen(f"{running.base}/slate.ts?channel=uuid-empty", timeout=5) as r:
+        assert r.read(4) == b"card"
+
+
+def test_the_card_for_a_channel_with_no_stream_is_written_in_the_log_with_its_name(
+    monkeypatch,
+):
+    lines: list[str] = []
+    monkeypatch.setattr(server_module, "_log", lines.append)
+    plain, empty = Broadcaster(["ffmpeg"]), Broadcaster(["ffmpeg"])
+    server = SlateServer(
+        ("127.0.0.1", 0),
+        plain,
+        "/slate.ts",
+        name_of=lambda uuid: f"Channel {uuid}",
+        empty_broadcaster=empty,
+        empty=lambda uuid: uuid == "uuid-empty",
+    )
+    try:
+        assert server.card_for("uuid-empty") is empty
+        assert server.card_for("uuid-other") is plain
+        assert lines == ["Channel uuid-empty gets the card for a channel with no stream of its own"]
+    finally:
+        server.server_close()
+        plain.close()
+        empty.close()
+
+
+def test_the_card_for_a_channel_with_no_stream_is_read_from_its_arguments():
+    given = _arguments("--empty-media", "/data/empty.mp4", "--empty-kind", "video",
+                       "--empty-has-audio")
+    assert (given.empty_media, given.empty_kind, given.empty_has_audio) == (
+        "/data/empty.mp4", "video", True
+    )
+    assert _arguments().empty_media is None
 
 
 def _arguments(*extra: str):

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from could_not_dispatch.server import parse_args
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_NAME = "_dispatcharr_plugin_could_not_dispatch"
 
@@ -615,6 +617,7 @@ def test_settings_read_by_the_code_are_declared_in_the_manifest(manifest):
     used = {
         "media_source",
         "media_source_full",
+        "media_source_empty",
         "port",
         "width",
         "height",
@@ -637,7 +640,7 @@ def test_the_channels_in_use_are_off_by_default(manifest):
     assert field["default"] is False
 
 
-def _started_arguments(loaded_module, monkeypatch, full, caption=None) -> list[str]:
+def _started_arguments(loaded_module, monkeypatch, full, caption=None, empty=None) -> list[str]:
     spawned: list[list[str]] = []
 
     def spawn(_base, arguments, *_args, **_kwargs):
@@ -649,7 +652,7 @@ def _started_arguments(loaded_module, monkeypatch, full, caption=None) -> list[s
     monkeypatch.setattr(loaded_module.Plugin, "_wait_for_port", lambda self, port: True)
     card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
     options = loaded_module.EncodeOptions.normalized()
-    loaded_module.Plugin()._start_process(card, options, 9721, "key", full, caption)
+    loaded_module.Plugin()._start_process(card, options, 9721, "key", full, caption, empty)
     return spawned[0]
 
 
@@ -668,6 +671,71 @@ def test_without_a_card_for_a_full_provider_the_server_gets_none(
 ):
     arguments = _started_arguments(loaded_module, monkeypatch, None)
     assert "--full-media" not in arguments
+
+
+def test_the_card_for_a_channel_with_no_stream_reaches_the_server(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    empty = loaded_module.media_module.Media(Path("/data/empty.mp4"), "video", has_audio=True)
+    arguments = _started_arguments(loaded_module, monkeypatch, None, empty=empty)
+    assert arguments[arguments.index("--empty-media") + 1] == str(Path("/data/empty.mp4"))
+    assert arguments[arguments.index("--empty-kind") + 1] == "video"
+    assert "--empty-has-audio" in arguments
+    assert "--full-media" not in arguments
+    assert parse_args(arguments).empty_media == str(Path("/data/empty.mp4"))
+
+
+def test_without_a_card_for_a_channel_with_no_stream_the_server_gets_none(
+    loaded_module, isolated_runtime, monkeypatch
+):
+    arguments = _started_arguments(loaded_module, monkeypatch, None)
+    assert "--empty-media" not in arguments
+
+
+def test_the_arguments_of_an_apply_from_0_8_0_start_the_server_without_that_card(
+    loaded_module,
+):
+    values = json.loads(_signature(loaded_module))
+    for key in ("empty_media", "empty_kind", "empty_has_audio"):
+        values.pop(key)
+    arguments = loaded_module.Plugin()._server_arguments(values, 9721)
+    assert "--empty-media" not in arguments
+    assert parse_args(arguments).media == str(Path("/data/card.png"))
+
+
+def test_setting_a_card_for_a_channel_with_no_stream_restarts_the_fallback(loaded_module):
+    plugin = loaded_module.Plugin()
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    empty = loaded_module.media_module.Media(Path("/data/empty.png"), "image", has_audio=False)
+    options = loaded_module.EncodeOptions.normalized()
+    assert plugin._signature(card, options, 9721, True) != plugin._signature(
+        card, options, 9721, True, None, None, empty
+    )
+
+
+@pytest.mark.parametrize(
+    ("api_key", "expected"),
+    [
+        ("key", "A channel with no stream of its own gets the image set for that."),
+        ("", "The card for a channel with no stream of its own needs the API key, so it is not"),
+    ],
+)
+def test_apply_says_whether_the_card_for_a_channel_with_no_stream_is_in_use(
+    loaded_module, api_key, expected
+):
+    card = loaded_module.media_module.Media(Path("/data/card.png"), "image", has_audio=False)
+    empty = loaded_module.media_module.Media(Path("/data/empty.png"), "image", has_audio=False)
+    message = loaded_module.Plugin()._apply_message(
+        loaded_module.media_module.Resolved(path=Path("/data/card.png"), from_cache=False),
+        card,
+        loaded_module.EncodeOptions.normalized(),
+        True,
+        loaded_module.targeting.Attachment(attached=0, separated=0, created=0),
+        3,
+        api_key=api_key,
+        empty=empty,
+    )
+    assert expected in message
 
 
 def test_the_server_gets_the_plugin_key_it_checks_streams_through(

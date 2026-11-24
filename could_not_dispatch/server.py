@@ -290,6 +290,8 @@ class SlateServer(ThreadingHTTPServer):
         crowded_broadcaster: Broadcaster | None = None,
         crowded: Callable[[str], bool] | None = None,
         name_of: Callable[[str], str] | None = None,
+        empty_broadcaster: Broadcaster | None = None,
+        empty: Callable[[str], bool] | None = None,
     ) -> None:
         self.broadcaster = broadcaster
         self.stream_path = stream_path
@@ -297,9 +299,14 @@ class SlateServer(ThreadingHTTPServer):
         self.crowded_broadcaster = crowded_broadcaster
         self.crowded = crowded or (lambda uuid: False)
         self.name_of = name_of or (lambda uuid: uuid)
+        self.empty_broadcaster = empty_broadcaster
+        self.empty = empty or (lambda uuid: False)
         super().__init__(address, SlateHandler)
 
     def card_for(self, channel: str) -> Broadcaster:
+        if self.empty_broadcaster is not None and channel and self.empty(channel):
+            _log(f"{self.name_of(channel)} gets the card for a channel with no stream of its own")
+            return self.empty_broadcaster
         if self.crowded_broadcaster is not None and channel and self.crowded(channel):
             _log(f"{self.name_of(channel)} gets the card for a full provider")
             return self.crowded_broadcaster
@@ -381,6 +388,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--full-media")
     parser.add_argument("--full-kind", choices=[KIND_IMAGE, KIND_VIDEO])
     parser.add_argument("--full-has-audio", action="store_true")
+    parser.add_argument("--empty-media")
+    parser.add_argument("--empty-kind", choices=[KIND_IMAGE, KIND_VIDEO])
+    parser.add_argument("--empty-has-audio", action="store_true")
     parser.add_argument("--in-use-file")
     parser.add_argument("--in-use-font")
     parser.add_argument("--in-use-top", type=float, default=IN_USE_TOP_PERCENT)
@@ -444,7 +454,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         crowded_broadcaster = Broadcaster(
             build_command(full, options, supports_readrate=readrate, caption=caption)
         )
-    cards = [broadcaster] if crowded_broadcaster is None else [broadcaster, crowded_broadcaster]
+    empty_broadcaster = None
+    if args.empty_media and args.empty_kind:
+        empty = Media(
+            path=Path(args.empty_media), kind=args.empty_kind, has_audio=args.empty_has_audio
+        )
+        empty_broadcaster = Broadcaster(build_command(empty, options, supports_readrate=readrate))
+    cards = [
+        card for card in (broadcaster, crowded_broadcaster, empty_broadcaster) if card is not None
+    ]
     recovery = build_recovery(
         slate_url(args.host, args.port, args.path),
         api_key,
@@ -459,6 +477,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         crowded_broadcaster=crowded_broadcaster,
         crowded=recovery.crowded if recovery is not None else None,
         name_of=recovery.name_of if recovery is not None else None,
+        empty_broadcaster=empty_broadcaster,
+        empty=recovery.empty if recovery is not None else None,
     )
 
     def request_shutdown(signum: int, frame: FrameType | None) -> None:
@@ -472,6 +492,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     _log(f"serving {args.path} on {args.host}:{args.port} from {args.media}")
     if crowded_broadcaster is not None:
         _log(f"channels that reach it with the provider full get {args.full_media}")
+    if empty_broadcaster is not None:
+        _log(f"channels with no stream of their own get {args.empty_media}")
     if caption is not None:
         _log(f"the channels in use are written on it from {caption.text_file}")
     if recovery is not None:
