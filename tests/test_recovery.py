@@ -205,6 +205,55 @@ def test_a_channel_whose_only_stream_is_the_fallback_is_left_there():
     assert lines[-1] == f"Channel {WEB3} has no stream besides the fallback"
 
 
+def test_a_channel_whose_every_stream_is_a_card_is_empty():
+    recovery, api, _ = build()
+    api.chain[WEB3] = [OWN_SLATE[WEB3]]
+    recovery.tick(0)
+    assert recovery.empty(WEB3)
+    assert not recovery.empty(CALCIO)
+
+
+def test_a_channel_the_catalogue_does_not_know_is_not_empty():
+    recovery, _, _ = build()
+    recovery.tick(0)
+    assert not recovery.empty("uuid-new")
+
+
+def test_an_empty_channel_is_looked_up_again_every_thirty_seconds_while_watched():
+    recovery, api, _ = build(waits=(600.0,))
+    api.chain[WEB3] = [OWN_SLATE[WEB3]]
+    recovery.tick(0)
+    api.put_on_slate(WEB3)
+    run(recovery, 10, 20)
+    assert api.catalogue_calls == 1
+    recovery.tick(30)
+    assert api.catalogue_calls == 2
+    run(recovery, 40, 50)
+    assert api.catalogue_calls == 2
+    recovery.tick(60)
+    assert api.catalogue_calls == 3
+
+
+def test_an_empty_channel_nobody_watches_leaves_the_catalogue_alone():
+    recovery, api, _ = build()
+    api.chain[WEB3] = [OWN_SLATE[WEB3]]
+    api.put_on_slate(WEB3, clients=0)
+    run(recovery, 0, 600)
+    assert api.catalogue_calls == 1
+
+
+def test_an_empty_channel_goes_back_within_a_minute_of_a_stream_added_after_ten_minutes():
+    recovery, api, lines = build()
+    api.chain[WEB3] = [OWN_SLATE[WEB3]]
+    api.put_on_slate(WEB3)
+    run(recovery, 0, 600)
+    assert api.changes == []
+    api.chain[WEB3] = [2262, OWN_SLATE[WEB3]]
+    run(recovery, 610, 660)
+    assert api.changes == [(WEB3, 2262)]
+    assert lines.count(f"Channel {WEB3} has no stream besides the fallback") == 1
+
+
 def test_the_first_source_skips_the_channels_own_fallback_wherever_it_sits():
     recovery, api, _ = build()
     api.chain[WEB3] = [OWN_SLATE[WEB3], 22930]

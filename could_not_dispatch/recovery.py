@@ -287,6 +287,7 @@ class Episode:
     sent_crowded_at: float | None = None
     sent_at: float | None = None
     awaiting_room: bool = False
+    reported_no_stream: bool = False
 
 
 @dataclass(frozen=True)
@@ -414,6 +415,11 @@ class Recovery:
             for account in (self._account_of(stream) for stream in sources)
         )
 
+    def empty(self, uuid: str) -> bool:
+        catalogue = self._catalogue
+        chain = catalogue.chains.get(uuid, [])
+        return bool(chain) and all(stream in catalogue.slates for stream in chain)
+
     def name_of(self, uuid: str) -> str:
         return self._catalogue.names.get(uuid, uuid)
 
@@ -465,10 +471,11 @@ class Recovery:
         waited = now - episode.since
         target = self._first_source(channel)
         if target is None:
-            episode.tries += 1
             episode.due_at = now + self._wait(episode.tries)
             episode.crowded = False
-            self._log(f"{channel.name} has no stream besides the fallback")
+            if not episode.reported_no_stream:
+                self._log(f"{channel.name} has no stream besides the fallback")
+            episode.reported_no_stream = True
             return False
         if counted:
             verdict = self._verdict(channel, target)
@@ -547,7 +554,7 @@ class Recovery:
             self._catalogue_at = now
 
     def _unknown(self, channel: SlatedChannel) -> bool:
-        if channel.uuid not in self._catalogue.chains:
+        if channel.uuid not in self._catalogue.chains or self.empty(channel.uuid):
             return True
         first = self._first_source(channel)
         return first is not None and first not in self._catalogue.accounts
